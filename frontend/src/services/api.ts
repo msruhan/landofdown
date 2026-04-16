@@ -1,0 +1,123 @@
+import axios from 'axios'
+import type {
+  AuthUser,
+  DashboardStats,
+  FilterOptions,
+  GameMatch,
+  Hero,
+  HeroStats,
+  LoginCredentials,
+  MatchCreatePayload,
+  PaginatedResponse,
+  Player,
+  PlayerStats,
+  RankingEntry,
+  Role,
+  RoleStats,
+  TrendPoint,
+} from '@/types'
+
+const api = axios.create({
+  baseURL: 'http://localhost:8000/api',
+  headers: {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  },
+})
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('auth_token')
+      if (window.location.pathname.startsWith('/admin') && window.location.pathname !== '/admin/login') {
+        window.location.href = '/admin/login'
+      }
+    }
+    return Promise.reject(error)
+  },
+)
+
+// Auth
+export const authApi = {
+  login: (credentials: LoginCredentials) => api.post<{ token: string; user: AuthUser }>('/admin/login', credentials),
+  logout: () => api.post('/admin/logout'),
+  me: () => api.get<AuthUser>('/admin/me'),
+}
+
+// Players
+export const playersApi = {
+  getPlayers: (params?: Record<string, unknown>) => api.get<PaginatedResponse<Player>>('/players', { params }),
+  getPlayer: (id: number) => api.get<{ data: Player }>(`/players/${id}`),
+  createPlayer: (data: Partial<Player>) => api.post<{ data: Player }>('/admin/players', data),
+  updatePlayer: (id: number, data: Partial<Player>) => api.put<{ data: Player }>(`/admin/players/${id}`, data),
+  deletePlayer: (id: number) => api.delete(`/admin/players/${id}`),
+}
+
+// Heroes
+export const heroesApi = {
+  getHeroes: (params?: Record<string, unknown>) => api.get<PaginatedResponse<Hero>>('/heroes', { params }),
+  getHero: (id: number) => api.get<{ data: Hero }>(`/heroes/${id}`),
+  createHero: (data: Partial<Hero>) => api.post<{ data: Hero }>('/admin/heroes', data),
+  updateHero: (id: number, data: Partial<Hero>) => api.put<{ data: Hero }>(`/admin/heroes/${id}`, data),
+  deleteHero: (id: number) => api.delete(`/admin/heroes/${id}`),
+}
+
+// Roles
+export const rolesApi = {
+  getRoles: (params?: Record<string, unknown>) => api.get<PaginatedResponse<Role>>('/roles', { params }),
+  createRole: (data: Partial<Role>) => api.post<{ data: Role }>('/admin/roles', data),
+  updateRole: (id: number, data: Partial<Role>) => api.put<{ data: Role }>(`/admin/roles/${id}`, data),
+  deleteRole: (id: number) => api.delete(`/admin/roles/${id}`),
+}
+
+// Matches
+export const matchesApi = {
+  getMatches: (params?: Record<string, unknown>) => api.get<PaginatedResponse<GameMatch>>('/matches', { params }),
+  getMatch: (id: number) => api.get<{ data: GameMatch }>(`/matches/${id}`),
+  createMatch: (data: MatchCreatePayload) => api.post<{ data: GameMatch }>('/admin/matches', data),
+  updateMatch: (id: number, data: MatchCreatePayload) => api.put<{ data: GameMatch }>(`/admin/matches/${id}`, data),
+  deleteMatch: (id: number) => api.delete(`/admin/matches/${id}`),
+}
+
+// Statistics
+export const statisticsApi = {
+  getDashboard: () => api.get<DashboardStats>('/statistics/dashboard'),
+  getPlayerStats: (playerId: number) => api.get<PlayerStats>(`/statistics/players/${playerId}`),
+  getHeroStats: (params?: Record<string, unknown>) => api.get<HeroStats[]>('/statistics/heroes', { params }),
+  getRoleStats: (params?: Record<string, unknown>) => api.get<RoleStats[]>('/statistics/roles', { params }),
+  getTrends: (params?: Record<string, unknown>) => api.get<TrendPoint[]>('/statistics/trends', { params }),
+}
+
+// Rankings
+export const rankingsApi = {
+  getRankings: (params?: FilterOptions) => api.get<{ data: RankingEntry[] }>('/rankings', { params: params as Record<string, unknown> }),
+}
+
+// Screenshots
+export const screenshotsApi = {
+  upload: (file: File) => {
+    const formData = new FormData()
+    formData.append('screenshot', file)
+    return api.post<{
+      data: Partial<MatchCreatePayload>
+      screenshot_id: number
+      file_path: string
+      ocr_message: string
+      ocr_success: boolean
+    }>('/admin/screenshots/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  confirmParsed: (id: number, data: MatchCreatePayload) => api.post<{ data: GameMatch }>(`/admin/screenshots/${id}/confirm`, data),
+}
+
+export default api
