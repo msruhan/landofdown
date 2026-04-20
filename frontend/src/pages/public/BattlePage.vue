@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import html2canvas from 'html2canvas'
 import { battleApi, playersApi } from '@/services/api'
-import type { BattleAiResponse, Player } from '@/types'
+import type { BattleAiRequest, BattleAiResponse, Player } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -74,6 +75,12 @@ const aiPrompt = ref('')
 const aiLoading = ref(false)
 const aiInstructionHistory = ref<string[]>([])
 const mapImageUrl = 'https://res.cloudinary.com/dkjkd4jt9/image/upload/v1776703999/basic_qhhahf.webp'
+const AI_DUPLICATE_PLAYER_ERROR = 'player id is duplicated across slots'
+const AI_UNIQUENESS_GUARDRAIL = 'PENTING: gunakan tepat 10 player unik. Jangan ada player id yang dipakai lebih dari sekali di semua slot.'
+const battleSectionRef = ref<HTMLElement | null>(null)
+const mapSectionRef = ref<HTMLElement | null>(null)
+const shareLoading = ref(false)
+const shareStatus = ref<string | null>(null)
 
 const selectedPlayers = computed(() => players.value.filter(p => selectedIds.value.has(p.id)))
 const selectedCount = computed(() => selectedIds.value.size)
@@ -132,6 +139,50 @@ function shuffleArray<T>(arr: T[]): T[] {
   return result
 }
 
+function buildBaselineMemoryFromSlots(draftSlots: BattleSlot[]): string {
+  const laneOrder: LaneKey[] = ['jungle', 'exp', 'mid', 'gold', 'roam']
+  const laneLabelMap = new Map(LANES.map((lane) => [lane.key, lane.short]))
+  const byLane = new Map(draftSlots.map((slot) => [slot.lane.key, slot]))
+  const laneSummary = laneOrder
+    .map((laneKey) => {
+      const slot = byLane.get(laneKey)
+      if (!slot) return null
+      const laneLabel = laneLabelMap.get(laneKey) || laneKey.toUpperCase()
+      return `${laneLabel}: ${slot.playerA.username} (Team A) vs ${slot.playerB.username} (Team B)`
+    })
+    .filter((line): line is string => Boolean(line))
+    .join(' | ')
+
+  return `Baseline draft dari randomize battle. Pertahankan susunan ini kecuali diubah prompt user: ${laneSummary}`
+}
+
+function shouldLockTeamsForPrompt(prompt: string): boolean {
+  const lower = prompt.toLowerCase()
+  const teamSwapPattern = /(pindah|tukar|swap|ganti|move).{0,20}(team|tim)|(team|tim).{0,20}(pindah|tukar|swap|ganti|move)/
+  return !teamSwapPattern.test(lower)
+}
+
+function buildTeamLockGuardrail(currentSlots?: Array<{ lane: LaneKey, team_a_player_id: number, team_b_player_id: number }>): string {
+  if (!currentSlots || currentSlots.length !== 5) return ''
+
+  const byId = new Map(players.value.map((p) => [p.id, p.username]))
+  const teamAPlayers = currentSlots
+    .map((slot) => byId.get(slot.team_a_player_id))
+    .filter((name): name is string => Boolean(name))
+  const teamBPlayers = currentSlots
+    .map((slot) => byId.get(slot.team_b_player_id))
+    .filter((name): name is string => Boolean(name))
+
+  if (teamAPlayers.length !== 5 || teamBPlayers.length !== 5) return ''
+
+  return [
+    'PENTING: ubah role/lane saja, JANGAN ubah komposisi anggota tim.',
+    `Team A harus tetap berisi: ${teamAPlayers.join(', ')}.`,
+    `Team B harus tetap berisi: ${teamBPlayers.join(', ')}.`,
+    'Hanya posisi lane yang boleh ditukar antar anggota dalam tim masing-masing.',
+  ].join(' ')
+}
+
 async function randomize() {
   errorMessage.value = null
   if (selectedCount.value < 10) {
@@ -166,6 +217,9 @@ async function randomize() {
     playerA: teamA[idx]!,
     playerB: teamB[idx]!,
   }))
+
+  // Keep a concrete baseline memory from randomize result to stabilize first AI refine.
+  aiInstructionHistory.value = [buildBaselineMemoryFromSlots(slots.value)]
 
   rolling.value = false
   revealed.value = true
@@ -210,16 +264,44 @@ async function randomizeWithAi() {
         }))
       : undefined
 
-    const payload = {
-      prompt: aiPrompt.value.trim(),
+    const basePrompt = aiPrompt.value.trim()
+    const buildPayload = (prompt: string): BattleAiRequest => {
+      const teamLockGuardrail = shouldLockTeamsForPrompt(prompt)
+        ? buildTeamLockGuardrail(currentSlots)
+        : ''
+      const finalPrompt = teamLockGuardrail ? `${prompt}\n\n${teamLockGuardrail}` : prompt
+
+      return {
+      prompt: finalPrompt,
       team_a_name: teamAName.value,
       team_b_name: teamBName.value,
       players: selectedPlayers.value.map((p) => ({ id: p.id, username: p.username })),
       current_slots: currentSlots,
       instruction_history: aiInstructionHistory.value,
+      }
     }
-    const res = await battleApi.aiRandomize(payload)
-    const data = res.data as BattleAiResponse
+
+    const requestDraft = async (prompt: string) => {
+      const res = await battleApi.aiRandomize(buildPayload(prompt))
+      return res.data as BattleAiResponse
+    }
+
+    const extractApiMessage = (err: unknown) =>
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message || null
+
+    let data: BattleAiResponse
+    try {
+      data = await requestDraft(basePrompt)
+    } catch (firstError: unknown) {
+      const firstMessage = extractApiMessage(firstError)
+      const shouldRetryWithGuardrail = typeof firstMessage === 'string'
+        && firstMessage.toLowerCase().includes(AI_DUPLICATE_PLAYER_ERROR)
+
+      if (!shouldRetryWithGuardrail) throw firstError
+
+      data = await requestDraft(`${basePrompt}\n\n${AI_UNIQUENESS_GUARDRAIL}`)
+    }
+
     const nextSlots = buildSlotsFromAiResult(data)
 
     if (nextSlots.length !== 5) {
@@ -230,7 +312,7 @@ async function randomizeWithAi() {
     teamBName.value = data.team_b_name || teamBName.value
     slots.value = nextSlots
     revealed.value = true
-    aiInstructionHistory.value = [...aiInstructionHistory.value, aiPrompt.value.trim()].slice(-20)
+    aiInstructionHistory.value = [...aiInstructionHistory.value, basePrompt].slice(-20)
     aiPrompt.value = ''
   } catch (e: unknown) {
     errorMessage.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'AI battle gagal diproses'
@@ -243,6 +325,7 @@ function resetBattle() {
   slots.value = []
   revealed.value = false
   errorMessage.value = null
+  aiInstructionHistory.value = []
 }
 
 function resetAiMemory() {
@@ -251,6 +334,134 @@ function resetAiMemory() {
 
 function avatarUrl(player: Player) {
   return player.avatar_url || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(player.username)}`
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('Gagal membaca data gambar'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function inlineImagesAsDataUrl(root: HTMLElement): Promise<() => void> {
+  const images = Array.from(root.querySelectorAll('img'))
+  const originals: Array<{ img: HTMLImageElement, src: string }> = []
+
+  for (const img of images) {
+    const src = img.currentSrc || img.src
+    if (!src || src.startsWith('data:')) continue
+
+    originals.push({ img, src })
+    try {
+      const response = await fetch(src, { mode: 'cors', credentials: 'omit' })
+      if (!response.ok) continue
+      const blob = await response.blob()
+      const dataUrl = await blobToDataUrl(blob)
+      img.src = dataUrl
+      await img.decode().catch(() => {})
+    } catch {
+      // Keep original src when remote image cannot be inlined.
+    }
+  }
+
+  return () => {
+    for (const { img, src } of originals) {
+      img.src = src
+    }
+  }
+}
+
+async function captureSectionImage(section: HTMLElement, filename: string): Promise<File> {
+  const baseOptions = {
+    backgroundColor: '#06121a',
+    scale: Math.min(window.devicePixelRatio || 1.5, 2),
+    useCORS: true,
+    logging: false,
+    imageTimeout: 15000,
+  }
+
+  let canvas: HTMLCanvasElement
+  try {
+    canvas = await html2canvas(section, baseOptions)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    const isUnsupportedColorFn = message.includes('unsupported color function') || message.includes('"color"')
+    if (!isUnsupportedColorFn) throw error
+
+    const restoreImages = await inlineImagesAsDataUrl(section)
+    try {
+      canvas = await html2canvas(section, {
+        ...baseOptions,
+        foreignObjectRendering: true,
+      })
+    } finally {
+      restoreImages()
+    }
+  }
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) {
+    throw new Error('Gagal membuat gambar screenshot')
+  }
+
+  return new File([blob], filename, { type: 'image/png' })
+}
+
+function downloadFallback(files: File[]) {
+  for (const file of files) {
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(file)
+    link.download = file.name
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(link.href)
+  }
+}
+
+async function shareToWhatsApp() {
+  shareStatus.value = null
+  if (!battleSectionRef.value || !mapSectionRef.value) {
+    shareStatus.value = 'Panel battle/map belum siap untuk di-capture'
+    return
+  }
+
+  shareLoading.value = true
+  try {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const [battleImage, mapImage] = await Promise.all([
+      captureSectionImage(battleSectionRef.value, `battle-${timestamp}.png`),
+      captureSectionImage(mapSectionRef.value, `map-${timestamp}.png`),
+    ])
+
+    const files = [battleImage, mapImage]
+    const shareData: ShareData = {
+      files,
+      title: 'MLBB Battle Result',
+      text: 'Hasil battle dan map mapping MLBB',
+    }
+
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share(shareData)
+      shareStatus.value = 'Screenshot berhasil dibagikan'
+      return
+    }
+
+    downloadFallback(files)
+    window.open(
+      'https://wa.me/?text=' + encodeURIComponent('Screenshot battle sudah diunduh. Silakan attach 2 gambar ke chat WhatsApp.'),
+      '_blank',
+      'noopener,noreferrer',
+    )
+    shareStatus.value = 'Browser belum support share file langsung. Gambar diunduh, lalu WhatsApp dibuka.'
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Gagal membagikan screenshot'
+    shareStatus.value = message
+  } finally {
+    shareLoading.value = false
+  }
 }
 </script>
 
@@ -273,7 +484,7 @@ function avatarUrl(player: Player) {
 
     <LoadingSpinner v-if="loading" />
 
-    <div v-else>
+    <div v-else class="battle-content">
       <!-- SELECTION PANEL -->
       <section class="panel">
         <div class="panel__header">
@@ -373,7 +584,7 @@ function avatarUrl(player: Player) {
       </section>
 
       <!-- BATTLE MAP -->
-      <section v-if="slots.length" class="panel panel--battle" :class="{ 'panel--rolling': rolling, 'panel--revealed': revealed }">
+      <section v-if="slots.length" ref="battleSectionRef" class="panel panel--battle" :class="{ 'panel--rolling': rolling, 'panel--revealed': revealed }">
         <div class="battle-map">
           <!-- Team headers -->
           <div class="battle-map__header battle-map__header--a">
@@ -458,15 +669,20 @@ function avatarUrl(player: Player) {
           </div>
           <div class="battle-footer__actions">
             <button class="btn-ghost" @click="resetBattle">Reset</button>
+            <!-- <button class="btn-ghost" :disabled="shareLoading" @click="shareToWhatsApp">
+              <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M20 12a8 8 0 1 1-1.2-4.2L21 5.6V11h-5.2l1.8-1.8A5.8 5.8 0 1 0 17.8 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              {{ shareLoading ? 'Capturing...' : 'Share to WhatsApp' }}
+            </button> -->
             <button class="btn-primary" @click="randomize" :disabled="rolling">
               <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 12a9 9 0 0 1 -15 6.7L3 16 M21 3v5h-5 M3 21v-5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               Re-Roll
             </button>
           </div>
         </div>
+        <p v-if="shareStatus" class="share-status">{{ shareStatus }}</p>
       </section>
 
-      <section v-if="slots.length" class="panel panel--map">
+      <section v-if="slots.length" ref="mapSectionRef" class="panel panel--map">
         <div class="panel__header">
           <div>
             <h2 class="panel__title">3. MLBB Map Mapping</h2>
@@ -514,6 +730,12 @@ function avatarUrl(player: Player) {
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.battle-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 /* ============ HERO ============ */
@@ -1061,14 +1283,14 @@ function avatarUrl(player: Player) {
 /* Approx lane coordinates on basic map image */
 /* Follow reference mapping:
    https://res.cloudinary.com/dkjkd4jt9/image/upload/v1776704502/basic_copy_urxxqb.jpg */
-.map-marker--gold.map-marker--a { left: 12%; top: 26%; }
-.map-marker--roam.map-marker--a { left: 11%; top: 38%; }
-.map-marker--mid.map-marker--a { left: 26%; top: 49%; }
-.map-marker--jungle.map-marker--a { left: 24%; top: 63%; }
+.map-marker--gold.map-marker--a { left: 21%; top: 24%; }
+.map-marker--roam.map-marker--a { left: 18%; top: 42%; }
+.map-marker--mid.map-marker--a { left: 30%; top: 43%; }
+.map-marker--jungle.map-marker--a { left: 28%; top: 57%; }
 .map-marker--exp.map-marker--a { left: 54%; top: 80%; }
 
 .map-marker--gold.map-marker--b { right: 69%; top: 10%; }
-.map-marker--roam.map-marker--b { right: 63%; top: 10%; }
+.map-marker--roam.map-marker--b { right: 52%; top: 4%; }
 .map-marker--mid.map-marker--b { right: 42%; top: 30%; }
 .map-marker--jungle.map-marker--b { right: 32%; top: 38%; }
 .map-marker--exp.map-marker--b { right: 15%; top: 44%; }
@@ -1361,6 +1583,12 @@ function avatarUrl(player: Player) {
 .battle-footer__actions {
   display: flex;
   gap: 10px;
+}
+
+.share-status {
+  margin-top: 14px;
+  font-size: 0.88rem;
+  color: #86efac;
 }
 
 /* ============ RESPONSIVE ============ */
