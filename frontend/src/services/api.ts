@@ -15,10 +15,14 @@ import type {
   Role,
   RoleStats,
   TrendPoint,
+  BattleAiRequest,
+  BattleAiResponse,
 } from '@/types'
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || '/api'
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: apiBaseUrl,
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',
@@ -100,6 +104,11 @@ export const statisticsApi = {
 // Rankings
 export const rankingsApi = {
   getRankings: (params?: FilterOptions) => api.get<{ data: RankingEntry[] }>('/rankings', { params: params as Record<string, unknown> }),
+}
+
+// Battle AI
+export const battleApi = {
+  aiRandomize: (data: BattleAiRequest) => api.post<BattleAiResponse>('/battle/ai-randomize', data),
 }
 
 // Screenshots

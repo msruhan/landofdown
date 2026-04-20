@@ -16,6 +16,7 @@ const saving = ref(false)
 const error = ref('')
 const parsed = ref(false)
 const ocrMessage = ref('')
+const screenshotPath = ref('')
 
 const matchDate = ref(new Date().toISOString().slice(0, 10))
 const duration = ref('')
@@ -44,7 +45,9 @@ interface ParsedPlayerRow {
   team?: 'team_a' | 'team_b'
   player_name?: string
   player_id?: number | null
+  hero_name?: string | null
   hero_id?: number | null
+  lane?: 'jungle' | 'exp' | 'mid' | 'gold' | 'roam' | null
   role_id?: number | null
   kills?: number
   deaths?: number
@@ -115,6 +118,41 @@ function findPlayerIdByName(name?: string): number | null {
   return bestDistance <= 2 ? bestId : null
 }
 
+function findHeroIdByName(name?: string | null): number | null {
+  if (!name) return null
+  const target = normalizeKey(name)
+  if (!target) return null
+
+  const exact = heroes.value.find((h) => normalizeKey(h.name) === target)
+  if (exact) return exact.id
+
+  const partial = heroes.value.find((h) => {
+    const heroName = normalizeKey(h.name)
+    return heroName.includes(target) || target.includes(heroName)
+  })
+  if (partial) return partial.id
+
+  let bestId: number | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const hero of heroes.value) {
+    const heroName = normalizeKey(hero.name)
+    if (!heroName) continue
+    const distance = levenshtein(target, heroName)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestId = hero.id
+    }
+  }
+
+  return bestDistance <= 3 ? bestId : null
+}
+
+function findRoleIdByLane(lane?: string | null): number | null {
+  if (!lane) return null
+  const role = roles.value.find((r) => normalizeKey(r.name) === normalizeKey(lane))
+  return role?.id ?? null
+}
+
 function applyParsedRows(parsedRows: ParsedPlayerRow[]) {
   const teamARows = parsedRows.filter((p) => p.team === 'team_a').slice(0, 5)
   const teamBRows = parsedRows.filter((p) => p.team === 'team_b').slice(0, 5)
@@ -126,7 +164,17 @@ function applyParsedRows(parsedRows: ParsedPlayerRow[]) {
       if (source.player_id != null) target.player_id = source.player_id
       else if (source.player_name) target.player_id = findPlayerIdByName(source.player_name)
       if (source.hero_id != null) target.hero_id = source.hero_id
+      else if (source.hero_name) target.hero_id = findHeroIdByName(source.hero_name)
+
       if (source.role_id != null) target.role_id = source.role_id
+      else if (source.lane) target.role_id = findRoleIdByLane(source.lane)
+
+      if (target.role_id == null && target.hero_id != null) {
+        const hero = heroes.value.find((h) => h.id === target.hero_id)
+        if (hero?.lane) {
+          target.role_id = findRoleIdByLane(hero.lane)
+        }
+      }
       if (typeof source.kills === 'number') target.kills = source.kills
       if (typeof source.deaths === 'number') target.deaths = source.deaths
       if (typeof source.assists === 'number') target.assists = source.assists
@@ -221,6 +269,7 @@ async function handleUpload() {
     const uploadFile = await compressImageForUpload(file.value)
     const res = await screenshotsApi.upload(uploadFile)
     const data = res.data.data
+    screenshotPath.value = res.data.file_path || ''
     ocrMessage.value = res.data.ocr_message || ''
     if (data.match_date) matchDate.value = data.match_date
     if (data.team_a_name) teamAName.value = data.team_a_name
@@ -268,6 +317,7 @@ async function handleSave() {
       team_b_name: teamBName.value,
       winner: winner.value,
       notes: notes.value || undefined,
+      screenshot_path: screenshotPath.value || undefined,
       players: allPlayers,
     })
     router.push('/admin/dashboard')

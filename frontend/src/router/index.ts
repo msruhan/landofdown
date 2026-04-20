@@ -16,6 +16,11 @@ const router = createRouter({
           component: () => import('@/pages/public/DashboardPage.vue'),
         },
         {
+          path: 'dashboard',
+          name: 'dashboard-alias',
+          component: () => import('@/pages/public/DashboardPage.vue'),
+        },
+        {
           path: 'ranking',
           name: 'ranking',
           component: () => import('@/pages/public/RankingPage.vue'),
@@ -24,6 +29,11 @@ const router = createRouter({
           path: 'statistics',
           name: 'statistics',
           component: () => import('@/pages/public/StatisticsPage.vue'),
+        },
+        {
+          path: 'battle',
+          name: 'battle',
+          component: () => import('@/pages/public/BattlePage.vue'),
         },
         {
           path: 'matches/:id',

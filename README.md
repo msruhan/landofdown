@@ -134,3 +134,39 @@ DB_PASSWORD=your_password
 
 php artisan migrate:fresh --seed
 ```
+
+## Docker (Single Image)
+
+Project ini disiapkan untuk **1 image Docker** yang berisi frontend + backend.
+Frontend diserve oleh Nginx, sedangkan backend Laravel dijalankan via PHP-FPM dalam container yang sama.
+
+### Build image
+
+```bash
+docker compose build
+```
+
+### Jalankan container
+
+```bash
+docker compose up -d
+```
+
+### Akses service
+
+- App (Frontend + API): `http://localhost:5173`
+- API contoh: `http://localhost:5173/api/statistics/dashboard`
+
+### Hentikan service
+
+```bash
+docker compose down
+```
+
+### Push ke Docker Hub (1 URL image)
+
+```bash
+docker tag mobile-legend-app:latest <dockerhub-username>/mlbb-stats:latest
+docker login
+docker push <dockerhub-username>/mlbb-stats:latest
+```

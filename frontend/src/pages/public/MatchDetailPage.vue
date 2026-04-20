@@ -30,6 +30,8 @@ function teamTotals(players: MatchPlayer[]) {
 
 const teamATotals = computed(() => teamTotals(teamA.value))
 const teamBTotals = computed(() => teamTotals(teamB.value))
+const winningTeam = computed(() => match.value?.winner ?? null)
+const isTeamAWinner = computed(() => winningTeam.value === 'team_a')
 function normalizeItem<T>(payload: T | { data?: T }): T {
   return (payload && typeof payload === 'object' && 'data' in (payload as Record<string, unknown>))
     ? ((payload as { data?: T }).data as T)
@@ -69,21 +71,32 @@ onMounted(async () => {
     </div>
 
     <template v-else-if="match">
+      <div class="result-banner" :class="{ 'result-banner--team-a': isTeamAWinner, 'result-banner--team-b': !isTeamAWinner }">
+        <div class="result-banner__team" :class="{ 'result-banner__team--winner': isTeamAWinner }">
+          <span class="result-banner__team-name">{{ match.team_a_name }}</span>
+          <span class="result-banner__score">{{ teamATotals.kills }}</span>
+        </div>
+        <div class="result-banner__center">
+          <span class="result-banner__status result-banner__status--win">
+            <span class="result-banner__status-icon">👑</span>
+            {{ isTeamAWinner ? 'VICTORY' : 'LOSE' }}
+          </span>
+          <span class="result-banner__vs">VS</span>
+          <span class="result-banner__status result-banner__status--lose">
+            {{ isTeamAWinner ? 'LOSE' : 'VICTORY' }}
+            <span v-if="!isTeamAWinner" class="result-banner__status-icon">🏆</span>
+          </span>
+        </div>
+        <div class="result-banner__team" :class="{ 'result-banner__team--winner': !isTeamAWinner }">
+          <span class="result-banner__score">{{ teamBTotals.kills }}</span>
+          <span class="result-banner__team-name">{{ match.team_b_name }}</span>
+        </div>
+      </div>
+
       <!-- Match Header -->
       <div class="match-header">
         <div class="match-header__date">{{ formattedDate }}</div>
         <div v-if="match.duration" class="match-header__duration">Duration: {{ match.duration }}</div>
-        <div class="match-header__teams">
-          <div class="match-header__team" :class="{ winner: match.winner === 'team_a' }">
-            <span class="team-name">{{ match.team_a_name }}</span>
-            <span v-if="match.winner === 'team_a'" class="winner-tag">WINNER</span>
-          </div>
-          <div class="match-header__vs">VS</div>
-          <div class="match-header__team" :class="{ winner: match.winner === 'team_b' }">
-            <span class="team-name">{{ match.team_b_name }}</span>
-            <span v-if="match.winner === 'team_b'" class="winner-tag">WINNER</span>
-          </div>
-        </div>
       </div>
 
       <!-- Teams -->
@@ -156,6 +169,91 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.result-banner {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+  padding: 20px 24px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(160deg, rgba(9, 18, 14, 0.95), rgba(6, 9, 8, 0.98));
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.25);
+}
+
+.result-banner__team {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.result-banner__team:last-child {
+  justify-content: flex-end;
+}
+
+.result-banner__team-name {
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.result-banner__score {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 3.2rem;
+  line-height: 1;
+  font-weight: 800;
+  color: #9ca3af;
+  text-shadow: 0 0 20px rgba(156, 163, 175, 0.2);
+}
+
+.result-banner__team--winner .result-banner__team-name {
+  color: var(--green-neon);
+}
+
+.result-banner__team--winner .result-banner__score {
+  color: var(--green-neon);
+  text-shadow: 0 0 30px rgba(0, 255, 135, 0.45);
+}
+
+.result-banner__center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.result-banner__status {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.6rem;
+  letter-spacing: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.result-banner__status--win {
+  color: var(--gold);
+}
+
+.result-banner__status--lose {
+  color: #94a3b8;
+}
+
+.result-banner__vs {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 2px 10px;
+}
+
+.result-banner__status-icon {
+  filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.45));
+}
+
 .match-header {
   text-align: center;
   margin-bottom: 40px;
@@ -171,57 +269,6 @@ onMounted(async () => {
   color: var(--text-secondary);
   font-size: 0.85rem;
   margin-bottom: 20px;
-}
-
-.match-header__teams {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 32px;
-}
-
-.match-header__team {
-  text-align: center;
-}
-
-.match-header__team .team-name {
-  font-family: var(--font-heading);
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--text-secondary);
-  display: block;
-}
-
-.match-header__team.winner .team-name {
-  color: var(--green-neon);
-}
-
-.match-header__team.winner {
-  text-shadow: 0 0 20px rgba(0, 255, 135, 0.3);
-}
-
-.winner-tag {
-  display: inline-block;
-  margin-top: 8px;
-  padding: 4px 12px;
-  background: rgba(0, 255, 135, 0.1);
-  color: var(--green-neon);
-  border: 1px solid rgba(0, 255, 135, 0.2);
-  border-radius: 99px;
-  font-family: var(--font-heading);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-
-.match-header__vs {
-  font-family: var(--font-heading);
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  padding: 8px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
 }
 
 .teams-grid {
@@ -302,13 +349,26 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
+  .result-banner {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    text-align: center;
+    padding: 18px 12px;
+  }
+
+  .result-banner__team,
+  .result-banner__team:last-child,
+  .result-banner__center {
+    justify-content: center;
+  }
+
+  .result-banner__score {
+    font-size: 2.6rem;
+  }
+
   .teams-grid {
     grid-template-columns: 1fr;
   }
 
-  .match-header__teams {
-    flex-direction: column;
-    gap: 16px;
-  }
 }
 </style>

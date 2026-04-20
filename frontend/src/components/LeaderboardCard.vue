@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LeaderboardEntry } from '@/types'
+import { getAvatarUrl, handleAvatarError } from '@/utils/avatar'
 
 const props = withDefaults(defineProps<{
   title: string
@@ -49,9 +50,10 @@ function formatValue(val: unknown): string {
         </span>
         <div class="leaderboard-card__avatar">
           <img
-            :src="`https://api.dicebear.com/7.x/adventurer/svg?seed=${player.username}`"
+            :src="getAvatarUrl(player.username)"
             :alt="player.username"
             class="leaderboard-card__avatar-img"
+            @error="(event) => handleAvatarError(event, player.username)"
           />
         </div>
         <span class="leaderboard-card__name">{{ player.username }}</span>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { getAvatarUrl, handleAvatarError } from '@/utils/avatar'
+
 defineProps<{
   username: string
   playerId?: number
@@ -13,7 +15,7 @@ defineProps<{
     class="player-badge"
   >
     <span class="player-badge__avatar">
-      <img :src="`https://api.dicebear.com/7.x/adventurer/svg?seed=${username}`" :alt="username" class="player-badge__img" />
+      <img :src="getAvatarUrl(username)" :alt="username" class="player-badge__img" @error="(event) => handleAvatarError(event, username)" />
     </span>
     <span class="player-badge__name">{{ username }}</span>
   </component>

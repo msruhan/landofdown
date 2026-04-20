@@ -167,6 +167,7 @@ export interface HeroStats {
   avg_rating: number | null
   mvp_count: number
   best_player: { id: number; username: string; avg_rating: number } | null
+  top_players?: { id: number; username: string; matches: number; avg_rating: number }[]
 }
 
 export interface RoleStats {
@@ -176,6 +177,10 @@ export interface RoleStats {
   wins: number
   win_rate: number
   avg_rating: number | null
+  most_used_player?: { id: number; username: string; matches: number } | null
+  most_winning_player?: { id: number; username: string; wins: number; matches: number; win_rate: number } | null
+  top_used_players?: { id: number; username: string; matches: number; wins: number; win_rate: number }[]
+  top_winning_players?: { id: number; username: string; wins: number; matches: number; win_rate: number }[]
   best_player: { id: number; username: string; avg_rating: number } | null
 }
 
@@ -255,6 +260,32 @@ export interface MatchPlayerPayload {
   assists: number
   rating: number
   medal: 'mvp_win' | 'mvp_lose' | 'gold' | 'silver' | 'bronze' | null
+}
+
+export interface BattleAiPlayer {
+  id: number
+  username: string
+}
+
+export interface BattleAiRequest {
+  prompt: string
+  team_a_name?: string
+  team_b_name?: string
+  players: BattleAiPlayer[]
+  current_slots?: BattleAiSlot[]
+  instruction_history?: string[]
+}
+
+export interface BattleAiSlot {
+  lane: 'jungle' | 'exp' | 'mid' | 'gold' | 'roam'
+  team_a_player_id: number
+  team_b_player_id: number
+}
+
+export interface BattleAiResponse {
+  team_a_name: string
+  team_b_name: string
+  slots: BattleAiSlot[]
 }
 
 export interface Column {

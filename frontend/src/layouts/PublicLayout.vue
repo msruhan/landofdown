@@ -21,6 +21,11 @@ const navLinks = [
     label: 'Statistics',
     icon: 'M4 19h16 M7 16V9 M12 16V5 M17 16v-3',
   },
+  {
+    to: '/battle',
+    label: 'Battle',
+    icon: 'M14.5 17.5L3 6V3h3l11.5 11.5 M13 19l6-6 M16 16l4 4 M19 21l2-2 M14.5 6.5l1-1l3 3l-1 1',
+  },
 ]
 
 function isActive(to: string) {
@@ -89,6 +94,7 @@ function isActive(to: string) {
           <router-link to="/" class="footer__link animated-underline">Dashboard</router-link>
           <router-link to="/ranking" class="footer__link animated-underline">Ranking</router-link>
           <router-link to="/statistics" class="footer__link animated-underline">Statistics</router-link>
+          <router-link to="/battle" class="footer__link animated-underline">Battle</router-link>
         </div>
         <div class="footer__bottom">
           <span>© {{ new Date().getFullYear() }} MLBB Stats Tracker</span>

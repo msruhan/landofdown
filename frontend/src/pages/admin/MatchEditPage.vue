@@ -65,7 +65,7 @@ const medals = [
 function toStorageUrl(path: string): string {
   if (!path) return ''
   if (path.startsWith('http://') || path.startsWith('https://')) return path
-  return `http://localhost:8000/storage/${path.replace(/^\/+/, '')}`
+  return `http://localhost:8000/api/matches/${matchId.value}/screenshot`
 }
 
 function getUploadedPath(payload: unknown): string | null {

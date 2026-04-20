@@ -2,11 +2,27 @@
 import type { GameMatch } from '@/types'
 import { computed } from 'vue'
 
-const props = defineProps<{ match: GameMatch }>()
+const props = withDefaults(defineProps<{ match: GameMatch; showScreenshot?: boolean }>(), {
+  showScreenshot: false,
+})
 
 const formattedDate = computed(() => {
   const d = new Date(props.match.match_date)
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+})
+
+const totalKills = computed(() => {
+  const players = props.match.match_players ?? []
+  const teamAKills = players.filter((p) => p.team === 'team_a').reduce((sum, p) => sum + p.kills, 0)
+  const teamBKills = players.filter((p) => p.team === 'team_b').reduce((sum, p) => sum + p.kills, 0)
+  return { teamA: teamAKills, teamB: teamBKills }
+})
+
+const screenshotUrl = computed(() => {
+  const path = props.match.screenshot_path
+  if (!path) return null
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  return `http://localhost:8000/api/matches/${props.match.id}/screenshot`
 })
 </script>
 
@@ -14,6 +30,13 @@ const formattedDate = computed(() => {
   <router-link :to="`/matches/${match.id}`" class="match-card corner-brackets">
     <div class="match-card__scanlines"></div>
     <div class="match-card__date">{{ formattedDate }}</div>
+    <img
+      v-if="showScreenshot && screenshotUrl"
+      :src="screenshotUrl"
+      alt="Match screenshot"
+      class="match-card__thumb"
+      loading="lazy"
+    >
     <div class="match-card__teams">
       <span class="match-card__team" :class="{ winner: match.winner === 'team_a' }">
         <span class="match-card__team-indicator" :class="match.winner === 'team_a' ? 'indicator-win' : 'indicator-lose'"></span>
@@ -31,6 +54,18 @@ const formattedDate = computed(() => {
       <span class="badge" :class="match.winner === 'team_a' ? 'badge-green' : 'badge-red'">
         {{ match.winner === 'team_a' ? match.team_a_name : match.team_b_name }} Won
       </span>
+    </div>
+    <div class="match-card__kills">
+      <span class="match-card__kills-label">Total Kill</span>
+      <div class="match-card__kills-values">
+        <span class="match-card__kills-side" :class="{ 'is-winner': match.winner === 'team_a' }">
+          {{ match.team_a_name }} {{ totalKills.teamA }}
+        </span>
+        <span class="match-card__kills-sep">-</span>
+        <span class="match-card__kills-side" :class="{ 'is-winner': match.winner === 'team_b' }">
+          {{ totalKills.teamB }} {{ match.team_b_name }}
+        </span>
+      </div>
     </div>
   </router-link>
 </template>
@@ -83,6 +118,16 @@ const formattedDate = computed(() => {
   margin-bottom: 12px;
   font-family: var(--font-heading);
   letter-spacing: 0.5px;
+}
+
+.match-card__thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0, 255, 135, 0.18);
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .match-card__teams {
@@ -152,5 +197,45 @@ const formattedDate = computed(() => {
 
 .match-card__result {
   text-align: center;
+}
+
+.match-card__kills {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.match-card__kills-label {
+  display: block;
+  text-align: center;
+  font-size: 0.66rem;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.match-card__kills-values {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--font-heading);
+}
+
+.match-card__kills-side {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+}
+
+.match-card__kills-side.is-winner {
+  color: var(--green-neon);
+  text-shadow: 0 0 10px rgba(0, 255, 135, 0.32);
+  font-weight: 700;
+}
+
+.match-card__kills-sep {
+  color: var(--text-muted);
 }
 </style>

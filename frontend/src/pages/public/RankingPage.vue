@@ -55,8 +55,9 @@ const maxStat = computed(() => {
 async function fetchRankings() {
   loading.value = true
   try {
+    const { role_id: _roleId, hero_id: _heroId, ...restFilters } = filters.value
     const response = await rankingsApi.getRankings({
-      ...filters.value,
+      ...restFilters,
       sort_by: sortBy.value,
       sort_dir: sortDir.value,
     })

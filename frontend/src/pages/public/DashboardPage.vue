@@ -14,6 +14,7 @@ import {
 } from 'chart.js'
 import { statisticsApi } from '@/services/api'
 import type { DashboardStats } from '@/types'
+import { getAvatarUrl, handleAvatarError } from '@/utils/avatar'
 import StatCard from '@/components/StatCard.vue'
 import LeaderboardCard from '@/components/LeaderboardCard.vue'
 import MatchResultCard from '@/components/MatchResultCard.vue'
@@ -220,9 +221,10 @@ const barOptions = {
           <div class="mvp-card__body">
             <div class="mvp-card__avatar-wrap">
               <img
-                :src="`https://api.dicebear.com/7.x/adventurer/svg?seed=${featuredMvp.username}`"
+                :src="getAvatarUrl(featuredMvp.username)"
                 :alt="featuredMvp.username"
                 class="mvp-card__avatar"
+                @error="(event) => handleAvatarError(event, featuredMvp?.username ?? 'Player')"
               />
               <div class="mvp-card__avatar-ring"></div>
             </div>

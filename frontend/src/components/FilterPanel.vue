@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import type { Role, Hero, FilterOptions } from '@/types'
-import { rolesApi, heroesApi } from '@/services/api'
+import { ref } from 'vue'
+import type { FilterOptions } from '@/types'
 
 const emit = defineEmits<{
   filter: [filters: FilterOptions]
@@ -12,29 +11,11 @@ const props = defineProps<{
   sortOptions?: { value: string; label: string }[]
 }>()
 
-const roles = ref<Role[]>([])
-const heroes = ref<Hero[]>([])
-
 const filters = ref<FilterOptions>({
-  role_id: undefined,
-  hero_id: undefined,
   period: undefined,
   min_matches: undefined,
   sort_by: undefined,
   sort_dir: 'desc',
-})
-
-onMounted(async () => {
-  try {
-    const [rolesRes, heroesRes] = await Promise.all([
-      rolesApi.getRoles({ per_page: 100 }),
-      heroesApi.getHeroes({ per_page: 200 }),
-    ])
-    roles.value = rolesRes.data.data
-    heroes.value = heroesRes.data.data
-  } catch {
-    // Silently handle - filters just won't have options
-  }
 })
 
 function applyFilters() {
@@ -42,7 +23,7 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  filters.value = { role_id: undefined, hero_id: undefined, period: undefined, min_matches: undefined, sort_by: undefined, sort_dir: 'desc' }
+  filters.value = { period: undefined, min_matches: undefined, sort_by: undefined, sort_dir: 'desc' }
   emit('filter', { ...filters.value })
 }
 </script>
@@ -50,22 +31,6 @@ function resetFilters() {
 <template>
   <div class="filter-panel">
     <div class="filter-panel__fields">
-      <div class="form-group">
-        <label class="form-label">Role</label>
-        <select v-model="filters.role_id" class="form-select" @change="applyFilters">
-          <option :value="undefined">All Roles</option>
-          <option v-for="role in roles" :key="role.id" :value="role.id">{{ role.name }}</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Hero</label>
-        <select v-model="filters.hero_id" class="form-select" @change="applyFilters">
-          <option :value="undefined">All Heroes</option>
-          <option v-for="hero in heroes" :key="hero.id" :value="hero.id">{{ hero.name }}</option>
-        </select>
-      </div>
-
       <div class="form-group">
         <label class="form-label">Period</label>
         <select v-model="filters.period" class="form-select" @change="applyFilters">
