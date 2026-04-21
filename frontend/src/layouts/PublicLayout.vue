@@ -26,6 +26,21 @@ const navLinks = [
     label: 'Battle',
     icon: 'M14.5 17.5L3 6V3h3l11.5 11.5 M13 19l6-6 M16 16l4 4 M19 21l2-2 M14.5 6.5l1-1l3 3l-1 1',
   },
+  {
+    to: '/drafts',
+    label: 'Drafts',
+    icon: 'M4 6h16 M4 10h10 M4 14h16 M4 18h8',
+  },
+  {
+    to: '/meta',
+    label: 'Meta',
+    icon: 'M3 12h4l3-9 4 18 3-9h4',
+  },
+  {
+    to: '/head-to-head',
+    label: 'H2H',
+    icon: 'M12 3v18 M5 8l7-5 7 5 M5 16l7 5 7-5',
+  },
 ]
 
 function isActive(to: string) {
@@ -95,6 +110,9 @@ function isActive(to: string) {
           <router-link to="/ranking" class="footer__link animated-underline">Ranking</router-link>
           <router-link to="/statistics" class="footer__link animated-underline">Statistics</router-link>
           <router-link to="/battle" class="footer__link animated-underline">Battle</router-link>
+          <router-link to="/drafts" class="footer__link animated-underline">Drafts</router-link>
+          <router-link to="/meta" class="footer__link animated-underline">Meta</router-link>
+          <router-link to="/head-to-head" class="footer__link animated-underline">H2H</router-link>
         </div>
         <div class="footer__bottom">
           <span>© {{ new Date().getFullYear() }} MLBB Stats Tracker</span>

@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import html2canvas from 'html2canvas'
-import { battleApi, playersApi } from '@/services/api'
-import type { BattleAiRequest, BattleAiResponse, Player } from '@/types'
+import { battleApi, playersApi, predictionApi } from '@/services/api'
+import type {
+  BattleAiRequest,
+  BattleAiResponse,
+  Player,
+  PredictionPlayerResult,
+  PredictionReasoningResponse,
+  PredictionResponse,
+  PredictionSlot,
+} from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -81,11 +89,20 @@ const battleSectionRef = ref<HTMLElement | null>(null)
 const mapSectionRef = ref<HTMLElement | null>(null)
 const shareLoading = ref(false)
 const shareStatus = ref<string | null>(null)
+const predictionLoading = ref(false)
+const predictionRequested = ref(false)
+const predictionError = ref<string | null>(null)
+const predictionResult = ref<PredictionResponse | null>(null)
+const reasoningLoading = ref(false)
+const reasoningError = ref<string | null>(null)
+const reasoning = ref<PredictionReasoningResponse | null>(null)
+const predictionSectionRef = ref<HTMLElement | null>(null)
 
 const selectedPlayers = computed(() => players.value.filter(p => selectedIds.value.has(p.id)))
 const selectedCount = computed(() => selectedIds.value.size)
 const canRandomize = computed(() => selectedCount.value >= 10 && !rolling.value)
 const canAiRandomize = computed(() => selectedCount.value >= 10 && !rolling.value && !aiLoading.value && aiPrompt.value.trim().length > 0)
+const canPredict = computed(() => slots.value.length === 5 && !rolling.value && !aiLoading.value)
 const hasAiMemory = computed(() => aiInstructionHistory.value.length > 0)
 const slotByLane = computed(() => {
   const byLane = new Map<LaneKey, BattleSlot>()
@@ -184,6 +201,7 @@ function buildTeamLockGuardrail(currentSlots?: Array<{ lane: LaneKey, team_a_pla
 }
 
 async function randomize() {
+  resetPredictionState()
   errorMessage.value = null
   if (selectedCount.value < 10) {
     errorMessage.value = 'Pilih minimal 10 player untuk memulai battle'
@@ -243,6 +261,7 @@ function buildSlotsFromAiResult(aiResult: BattleAiResponse) {
 }
 
 async function randomizeWithAi() {
+  resetPredictionState()
   errorMessage.value = null
   if (selectedCount.value < 10) {
     errorMessage.value = 'Pilih minimal 10 player untuk menggunakan AI battle'
@@ -326,6 +345,7 @@ function resetBattle() {
   revealed.value = false
   errorMessage.value = null
   aiInstructionHistory.value = []
+  resetPredictionState()
 }
 
 function resetAiMemory() {
@@ -334,6 +354,145 @@ function resetAiMemory() {
 
 function avatarUrl(player: Player) {
   return player.avatar_url || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(player.username)}`
+}
+
+function resetPredictionState() {
+  predictionLoading.value = false
+  predictionRequested.value = false
+  predictionError.value = null
+  predictionResult.value = null
+  reasoningLoading.value = false
+  reasoningError.value = null
+  reasoning.value = null
+}
+
+function buildPredictionSlots(): { teamA: PredictionSlot[], teamB: PredictionSlot[] } {
+  const teamA: PredictionSlot[] = slots.value.map((slot) => ({ player_id: slot.playerA.id }))
+  const teamB: PredictionSlot[] = slots.value.map((slot) => ({ player_id: slot.playerB.id }))
+  return { teamA, teamB }
+}
+
+const predictionWinner = computed<'team_a' | 'team_b' | 'draw'>(() => {
+  const r = predictionResult.value
+  if (!r) return 'draw'
+  if (Math.abs(r.team_a.win_probability - r.team_b.win_probability) < 1) return 'draw'
+  return r.team_a.win_probability > r.team_b.win_probability ? 'team_a' : 'team_b'
+})
+
+const predictionWinnerName = computed(() => {
+  if (predictionWinner.value === 'team_a') return teamAName.value
+  if (predictionWinner.value === 'team_b') return teamBName.value
+  return 'Seri'
+})
+
+const confidenceTier = computed(() => {
+  const c = predictionResult.value?.confidence ?? 0
+  if (c >= 60) return { label: 'Sangat yakin', tone: 'high' as const }
+  if (c >= 30) return { label: 'Cukup yakin', tone: 'mid' as const }
+  if (c >= 10) return { label: 'Tipis', tone: 'low' as const }
+  return { label: 'Hampir seimbang', tone: 'draw' as const }
+})
+
+function formatPct(rate: number | null | undefined, digits = 0) {
+  if (rate === null || rate === undefined) return '—'
+  return `${(rate * 100).toFixed(digits)}%`
+}
+
+function formStreak(p: PredictionPlayerResult): Array<'W' | 'L' | '-'> {
+  const streak = p.recent_form.streak ?? []
+  const out: Array<'W' | 'L' | '-'> = []
+  for (let i = 0; i < 5; i++) {
+    const v = streak[i]
+    if (v === 'win') out.push('W')
+    else if (v === 'loss') out.push('L')
+    else out.push('-')
+  }
+  return out
+}
+
+function findPlayer(team: 'team_a' | 'team_b', id: number): Player | null {
+  const slot = slots.value.find(s => (team === 'team_a' ? s.playerA.id : s.playerB.id) === id)
+  return slot ? (team === 'team_a' ? slot.playerA : slot.playerB) : null
+}
+
+function playerAvatar(team: 'team_a' | 'team_b', p: PredictionPlayerResult): string {
+  const pl = findPlayer(team, p.player_id)
+  if (pl) return avatarUrl(pl)
+  return p.avatar_url || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.username ?? String(p.player_id))}`
+}
+
+function factorTypeLabel(t: string): string {
+  const map: Record<string, string> = {
+    form: 'Recent Form',
+    hero_mastery: 'Hero Mastery',
+    role_mastery: 'Role Mastery',
+    overall_winrate: 'Overall Winrate',
+    matchup: 'Matchup',
+    synergy: 'Synergy',
+  }
+  return map[t] ?? t
+}
+
+function factorTypeIcon(t: string): string {
+  const map: Record<string, string> = {
+    form: 'M3 17l6-6 4 4 8-8',
+    hero_mastery: 'M12 2l3 6 6.5.9-4.7 4.6 1.1 6.5L12 17l-5.9 3 1.1-6.5L2.5 8.9 9 8z',
+    role_mastery: 'M12 2l9 4v6c0 5-3.8 9.3-9 10c-5.2-.7-9-5-9-10V6z',
+    overall_winrate: 'M4 20h16 M6 16l4-6 3 3 5-7',
+    matchup: 'M5 12h14 M5 6h14 M5 18h10',
+    synergy: 'M12 2l2 6h6l-5 4 2 6-5-4-5 4 2-6-5-4h6z',
+  }
+  return map[t] ?? 'M4 4h16v16H4z'
+}
+
+async function fetchReasoning() {
+  if (!predictionResult.value) return
+  reasoningLoading.value = true
+  reasoningError.value = null
+  reasoning.value = null
+  try {
+    const payload = buildPredictionSlots()
+    const response = await predictionApi.reasoning(
+      { name: teamAName.value, players: payload.teamA },
+      { name: teamBName.value, players: payload.teamB },
+      predictionResult.value,
+    )
+    reasoning.value = response.data
+  } catch (e: unknown) {
+    reasoningError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Analisis AI gagal dimuat'
+  } finally {
+    reasoningLoading.value = false
+  }
+}
+
+async function predictBattle() {
+  if (slots.value.length !== 5) return
+  predictionRequested.value = true
+  predictionLoading.value = true
+  predictionError.value = null
+  predictionResult.value = null
+  reasoning.value = null
+  reasoningError.value = null
+
+  try {
+    const payload = buildPredictionSlots()
+    const response = await predictionApi.predict(payload.teamA, payload.teamB)
+    predictionResult.value = response.data
+  } catch (e: unknown) {
+    predictionError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Predict gagal diproses'
+    predictionLoading.value = false
+    return
+  } finally {
+    predictionLoading.value = false
+  }
+
+  // Scroll prediction panel into view for quick inspection.
+  setTimeout(() => {
+    predictionSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, 120)
+
+  // Kick off AI reasoning in background; numeric prediction already shown.
+  fetchReasoning()
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
@@ -463,6 +622,8 @@ async function shareToWhatsApp() {
     shareLoading.value = false
   }
 }
+
+void shareToWhatsApp
 </script>
 
 <template>
@@ -673,6 +834,21 @@ async function shareToWhatsApp() {
               <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M20 12a8 8 0 1 1-1.2-4.2L21 5.6V11h-5.2l1.8-1.8A5.8 5.8 0 1 0 17.8 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               {{ shareLoading ? 'Capturing...' : 'Share to WhatsApp' }}
             </button> -->
+            <button
+              type="button"
+              class="btn-predict"
+              :class="{ 'btn-predict--loading': predictionLoading }"
+              :disabled="!canPredict || predictionLoading"
+              @click="predictBattle"
+            >
+              <span class="btn-predict__pulse" aria-hidden="true"></span>
+              <svg class="btn-predict__icon" viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true">
+                <path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="currentColor" fill-opacity="0.15"/>
+              </svg>
+              <span class="btn-predict__label">
+                {{ predictionLoading ? 'Predicting...' : 'Predict Winner' }}
+              </span>
+            </button>
             <button class="btn-primary" @click="randomize" :disabled="rolling">
               <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 12a9 9 0 0 1 -15 6.7L3 16 M21 3v5h-5 M3 21v-5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               Re-Roll
@@ -680,6 +856,266 @@ async function shareToWhatsApp() {
           </div>
         </div>
         <p v-if="shareStatus" class="share-status">{{ shareStatus }}</p>
+
+        <div v-if="predictionRequested" ref="predictionSectionRef" class="prediction-panel">
+          <header class="prediction-panel__header">
+            <div class="prediction-panel__title-wrap">
+              <span class="prediction-panel__eyebrow">AI-Powered Analysis</span>
+              <h3 class="prediction-panel__title">
+                <svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">
+                  <path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="currentColor" fill-opacity="0.25"/>
+                </svg>
+                Battle Prediction
+              </h3>
+              <p class="prediction-panel__subtitle">Peluang menang dihitung dari recent form, hero &amp; role mastery, serta overall winrate.</p>
+            </div>
+            <button
+              v-if="predictionResult && !predictionLoading"
+              type="button"
+              class="prediction-panel__refresh"
+              :disabled="reasoningLoading"
+              @click="fetchReasoning"
+            >
+              <svg viewBox="0 0 24 24" fill="none" width="14" height="14" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 12a9 9 0 0 1 -15 6.7L3 16 M21 3v5h-5 M3 21v-5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              {{ reasoningLoading ? 'Menulis ulang...' : 'Ulangi analisis AI' }}
+            </button>
+          </header>
+
+          <!-- Loading skeleton for numeric prediction -->
+          <div v-if="predictionLoading" class="prediction-skeleton">
+            <div class="prediction-skeleton__bar"></div>
+            <div class="prediction-skeleton__grid">
+              <div class="prediction-skeleton__box"></div>
+              <div class="prediction-skeleton__box"></div>
+            </div>
+            <p class="prediction-panel__loading">Menghitung peluang menang berdasarkan histori match...</p>
+          </div>
+
+          <div v-else-if="predictionError" class="prediction-panel__error">
+            <svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M12 9v4 M12 17h.01 M10.3 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            {{ predictionError }}
+          </div>
+
+          <div v-else-if="predictionResult" class="prediction-result">
+            <!-- Hero verdict banner -->
+            <div
+              class="prediction-verdict"
+              :class="{
+                'prediction-verdict--a': predictionWinner === 'team_a',
+                'prediction-verdict--b': predictionWinner === 'team_b',
+                'prediction-verdict--draw': predictionWinner === 'draw',
+              }"
+            >
+              <div class="prediction-verdict__team prediction-verdict__team--a">
+                <span class="prediction-verdict__label">Team A</span>
+                <span class="prediction-verdict__name">{{ teamAName }}</span>
+                <span class="prediction-verdict__prob">{{ predictionResult.team_a.win_probability }}%</span>
+                <span class="prediction-verdict__score">Score: {{ predictionResult.team_a.score.toFixed(3) }}</span>
+              </div>
+
+              <div class="prediction-verdict__center">
+                <span class="prediction-verdict__badge">
+                  <svg v-if="predictionWinner !== 'draw'" viewBox="0 0 24 24" fill="none" width="14" height="14" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  {{ predictionWinner === 'draw' ? 'Peluang Imbang' : 'Prediksi Pemenang' }}
+                </span>
+                <span class="prediction-verdict__winner">
+                  <span v-if="predictionWinner === 'draw'">{{ teamAName }} vs {{ teamBName }}</span>
+                  <span v-else>{{ predictionWinnerName }}</span>
+                </span>
+                <span
+                  class="prediction-verdict__confidence"
+                  :class="`prediction-verdict__confidence--${confidenceTier.tone}`"
+                >
+                  {{ confidenceTier.label }} · {{ predictionResult.confidence }}%
+                </span>
+              </div>
+
+              <div class="prediction-verdict__team prediction-verdict__team--b">
+                <span class="prediction-verdict__label">Team B</span>
+                <span class="prediction-verdict__name">{{ teamBName }}</span>
+                <span class="prediction-verdict__prob">{{ predictionResult.team_b.win_probability }}%</span>
+                <span class="prediction-verdict__score">Score: {{ predictionResult.team_b.score.toFixed(3) }}</span>
+              </div>
+            </div>
+
+            <!-- Probability gauge -->
+            <div class="prediction-gauge" :aria-label="`Probability bar: ${predictionResult.team_a.win_probability}% vs ${predictionResult.team_b.win_probability}%`">
+              <div class="prediction-gauge__track">
+                <div class="prediction-gauge__fill prediction-gauge__fill--a" :style="{ width: predictionResult.team_a.win_probability + '%' }">
+                  <span class="prediction-gauge__value">{{ predictionResult.team_a.win_probability }}%</span>
+                </div>
+                <div class="prediction-gauge__fill prediction-gauge__fill--b" :style="{ width: predictionResult.team_b.win_probability + '%' }">
+                  <span class="prediction-gauge__value">{{ predictionResult.team_b.win_probability }}%</span>
+                </div>
+                <div class="prediction-gauge__center" aria-hidden="true"></div>
+              </div>
+              <div class="prediction-gauge__axis">
+                <span>0%</span>
+                <span>50/50</span>
+                <span>100%</span>
+              </div>
+            </div>
+
+            <!-- AI reasoning card -->
+            <div class="prediction-reasoning">
+              <div class="prediction-reasoning__head">
+                <span class="prediction-reasoning__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M9 18h6 M10 22h4 M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <div class="prediction-reasoning__head-text">
+                  <h4 class="prediction-reasoning__title">Analisis AI</h4>
+                  <p class="prediction-reasoning__hint">
+                    <span v-if="reasoningLoading">OpenRouter sedang menulis alasan prediksi...</span>
+                    <span v-else-if="reasoning?.model">Diberdayakan oleh {{ reasoning.model }}</span>
+                    <span v-else-if="reasoningError">Narasi AI tidak tersedia, menggunakan ringkasan data.</span>
+                    <span v-else>Kenapa salah satu tim diprediksi menang?</span>
+                  </p>
+                </div>
+              </div>
+
+              <div v-if="reasoningLoading" class="prediction-reasoning__skeleton">
+                <span></span><span></span><span></span>
+              </div>
+
+              <div v-else-if="reasoning">
+                <p class="prediction-reasoning__summary">“{{ reasoning.summary }}”</p>
+                <div v-if="reasoning.key_factors?.length" class="prediction-factors">
+                  <div
+                    v-for="(f, idx) in reasoning.key_factors"
+                    :key="`factor-${idx}`"
+                    class="prediction-factor"
+                    :class="`prediction-factor--${f.team}`"
+                  >
+                    <span class="prediction-factor__icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path :d="factorTypeIcon(f.type)" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </span>
+                    <div class="prediction-factor__body">
+                      <div class="prediction-factor__title-row">
+                        <span class="prediction-factor__title">{{ f.title }}</span>
+                        <span class="prediction-factor__type">{{ factorTypeLabel(f.type) }}</span>
+                      </div>
+                      <p class="prediction-factor__desc">{{ f.description }}</p>
+                    </div>
+                    <span
+                      class="prediction-factor__tag"
+                      :class="`prediction-factor__tag--${f.team}`"
+                      v-if="f.team !== 'neutral'"
+                    >
+                      {{ f.team === 'team_a' ? teamAName : teamBName }}
+                    </span>
+                  </div>
+                </div>
+                <p v-if="reasoning.warning" class="prediction-reasoning__warning">⚠ {{ reasoning.warning }}</p>
+              </div>
+
+              <div v-else-if="reasoningError" class="prediction-reasoning__error">
+                <svg viewBox="0 0 24 24" fill="none" width="14" height="14" aria-hidden="true"><path d="M12 9v4 M12 17h.01 M10.3 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                {{ reasoningError }}
+                <button type="button" class="prediction-reasoning__retry" @click="fetchReasoning" :disabled="reasoningLoading">Coba lagi</button>
+              </div>
+            </div>
+
+            <!-- Detailed player breakdown -->
+            <div class="prediction-detail-grid">
+              <div class="prediction-team prediction-team--a">
+                <header class="prediction-team__header">
+                  <div>
+                    <span class="prediction-team__tag">Team A</span>
+                    <h4 class="prediction-team__title">{{ teamAName }}</h4>
+                  </div>
+                  <div class="prediction-team__stat">
+                    <span class="prediction-team__stat-num">{{ predictionResult.team_a.win_probability }}%</span>
+                    <span class="prediction-team__stat-lbl">Win prob</span>
+                  </div>
+                </header>
+                <ul class="prediction-player-list">
+                  <li
+                    v-for="p in predictionResult.team_a.players"
+                    :key="`pa-${p.player_id}`"
+                    class="prediction-player-row"
+                  >
+                    <img :src="playerAvatar('team_a', p)" :alt="p.username ?? 'player'" class="prediction-player-row__avatar">
+                    <div class="prediction-player-row__info">
+                      <div class="prediction-player-row__name-row">
+                        <span class="prediction-player-row__name">{{ p.username ?? `#${p.player_id}` }}</span>
+                        <span class="prediction-player-row__score">Score {{ p.score.toFixed(2) }}</span>
+                      </div>
+                      <div class="prediction-player-row__streak" aria-label="Recent form">
+                        <span
+                          v-for="(s, i) in formStreak(p)"
+                          :key="`pas-${p.player_id}-${i}`"
+                          class="form-dot"
+                          :class="{ 'form-dot--w': s === 'W', 'form-dot--l': s === 'L', 'form-dot--n': s === '-' }"
+                        >{{ s }}</span>
+                        <span class="prediction-player-row__form-pct">{{ formatPct(p.recent_form.rate) }}</span>
+                      </div>
+                      <div class="prediction-player-row__stats">
+                        <span class="stat-chip">Overall {{ formatPct(p.overall.rate) }} · {{ p.overall.matches }}m</span>
+                        <span v-if="p.hero_mastery" class="stat-chip stat-chip--hero">Hero {{ formatPct(p.hero_mastery.rate) }} · {{ p.hero_mastery.matches }}m</span>
+                        <span v-if="p.role_mastery" class="stat-chip stat-chip--role">Role {{ formatPct(p.role_mastery.rate) }} · {{ p.role_mastery.matches }}m</span>
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+
+              <div class="prediction-team prediction-team--b">
+                <header class="prediction-team__header">
+                  <div>
+                    <span class="prediction-team__tag">Team B</span>
+                    <h4 class="prediction-team__title">{{ teamBName }}</h4>
+                  </div>
+                  <div class="prediction-team__stat">
+                    <span class="prediction-team__stat-num">{{ predictionResult.team_b.win_probability }}%</span>
+                    <span class="prediction-team__stat-lbl">Win prob</span>
+                  </div>
+                </header>
+                <ul class="prediction-player-list">
+                  <li
+                    v-for="p in predictionResult.team_b.players"
+                    :key="`pb-${p.player_id}`"
+                    class="prediction-player-row"
+                  >
+                    <img :src="playerAvatar('team_b', p)" :alt="p.username ?? 'player'" class="prediction-player-row__avatar">
+                    <div class="prediction-player-row__info">
+                      <div class="prediction-player-row__name-row">
+                        <span class="prediction-player-row__name">{{ p.username ?? `#${p.player_id}` }}</span>
+                        <span class="prediction-player-row__score">Score {{ p.score.toFixed(2) }}</span>
+                      </div>
+                      <div class="prediction-player-row__streak" aria-label="Recent form">
+                        <span
+                          v-for="(s, i) in formStreak(p)"
+                          :key="`pbs-${p.player_id}-${i}`"
+                          class="form-dot"
+                          :class="{ 'form-dot--w': s === 'W', 'form-dot--l': s === 'L', 'form-dot--n': s === '-' }"
+                        >{{ s }}</span>
+                        <span class="prediction-player-row__form-pct">{{ formatPct(p.recent_form.rate) }}</span>
+                      </div>
+                      <div class="prediction-player-row__stats">
+                        <span class="stat-chip">Overall {{ formatPct(p.overall.rate) }} · {{ p.overall.matches }}m</span>
+                        <span v-if="p.hero_mastery" class="stat-chip stat-chip--hero">Hero {{ formatPct(p.hero_mastery.rate) }} · {{ p.hero_mastery.matches }}m</span>
+                        <span v-if="p.role_mastery" class="stat-chip stat-chip--role">Role {{ formatPct(p.role_mastery.rate) }} · {{ p.role_mastery.matches }}m</span>
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Weights footer -->
+            <div class="prediction-weights">
+              <span class="prediction-weights__label">Model weights:</span>
+              <span
+                v-for="(w, key) in predictionResult.weights"
+                :key="`w-${key}`"
+                class="weight-chip"
+              >
+                {{ String(key).replace('_', ' ') }}
+                <strong>{{ Math.round(w * 100) }}%</strong>
+              </span>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section v-if="slots.length" ref="mapSectionRef" class="panel panel--map">
@@ -1234,7 +1670,7 @@ async function shareToWhatsApp() {
   backdrop-filter: blur(4px);
   border: 1px solid rgba(255, 255, 255, 0.25);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
-  max-width: 190px;
+  max-width: 200px;
 }
 
 .map-marker--a {
@@ -1246,8 +1682,8 @@ async function shareToWhatsApp() {
 }
 
 .map-marker__avatar {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.65);
   flex-shrink: 0;
@@ -1265,18 +1701,22 @@ async function shareToWhatsApp() {
 }
 
 .map-marker__name {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.1;
+  line-height: 1.15;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 .map-marker__lane {
   font-family: 'Teko', var(--font-heading);
-  font-size: 0.72rem;
-  letter-spacing: 1.4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 1.2px;
   color: #d1fae5;
 }
 
@@ -1285,8 +1725,9 @@ async function shareToWhatsApp() {
    https://res.cloudinary.com/dkjkd4jt9/image/upload/v1776704502/basic_copy_urxxqb.jpg */
 .map-marker--gold.map-marker--a { left: 21%; top: 24%; }
 .map-marker--roam.map-marker--a { left: 18%; top: 42%; }
-.map-marker--mid.map-marker--a { left: 30%; top: 43%; }
-.map-marker--jungle.map-marker--a { left: 28%; top: 57%; }
+/* Mid & Jungle A: geser kanan + maju ke arah pusat / lane (lawan) */
+.map-marker--mid.map-marker--a { left: 42%; top: 34%; }
+.map-marker--jungle.map-marker--a { left: 48%; top: 45%; }
 .map-marker--exp.map-marker--a { left: 54%; top: 80%; }
 
 .map-marker--gold.map-marker--b { right: 69%; top: 10%; }
@@ -1591,6 +2032,817 @@ async function shareToWhatsApp() {
   color: #86efac;
 }
 
+/* ============ PREDICT BUTTON ============ */
+.btn-predict {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 92, 255, 0.45);
+  background: linear-gradient(135deg, #7c5cff 0%, #22d3ee 55%, #10b981 100%);
+  background-size: 180% 180%;
+  color: #0b0416;
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 10px 28px -10px rgba(124, 92, 255, 0.75),
+    0 0 24px -4px rgba(34, 211, 238, 0.5);
+  animation: predictSheen 4s ease-in-out infinite;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.btn-predict:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  filter: brightness(1.08);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+    0 14px 32px -10px rgba(124, 92, 255, 0.9),
+    0 0 32px -2px rgba(34, 211, 238, 0.7);
+}
+
+.btn-predict:active:not(:disabled) {
+  transform: translateY(0) scale(0.99);
+}
+
+.btn-predict:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.4) brightness(0.75);
+  animation: none;
+  box-shadow: none;
+  opacity: 0.75;
+}
+
+.btn-predict__pulse {
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.35), transparent 45%),
+              radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.25), transparent 50%);
+  opacity: 0.6;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.btn-predict:not(:disabled)::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: conic-gradient(from 0deg, transparent 0deg, rgba(124, 92, 255, 0.55) 60deg, transparent 140deg);
+  filter: blur(8px);
+  opacity: 0.7;
+  z-index: -1;
+  animation: predictHalo 4s linear infinite;
+}
+
+.btn-predict__icon {
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.6));
+}
+
+.btn-predict__label { position: relative; }
+
+.btn-predict--loading {
+  animation: predictSheen 2s ease-in-out infinite, predictPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes predictSheen {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes predictHalo {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes predictPulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 10px 28px -10px rgba(124, 92, 255, 0.75); }
+  50% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 14px 36px -6px rgba(124, 92, 255, 1); }
+}
+
+/* ============ PREDICTION PANEL ============ */
+.prediction-panel {
+  margin-top: 18px;
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(124, 92, 255, 0.25);
+  background:
+    radial-gradient(800px 300px at 10% -10%, rgba(124, 92, 255, 0.12), transparent 60%),
+    radial-gradient(800px 300px at 110% 120%, rgba(34, 211, 238, 0.08), transparent 60%),
+    linear-gradient(180deg, rgba(10, 20, 30, 0.85), rgba(6, 18, 26, 0.95));
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  box-shadow: 0 20px 48px -24px rgba(0, 0, 0, 0.9);
+}
+
+.prediction-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(124, 92, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(124, 92, 255, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.prediction-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 18px;
+  position: relative;
+}
+
+.prediction-panel__title-wrap { display: flex; flex-direction: column; gap: 4px; }
+
+.prediction-panel__eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #c4b5fd;
+  opacity: 0.85;
+}
+
+.prediction-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Teko', var(--font-heading);
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: #e9d5ff;
+  font-size: 1.7rem;
+  line-height: 1;
+  text-shadow: 0 0 18px rgba(124, 92, 255, 0.35);
+}
+
+.prediction-panel__subtitle {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  max-width: 54ch;
+}
+
+.prediction-panel__refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(196, 181, 253, 0.25);
+  background: rgba(124, 92, 255, 0.08);
+  color: #c4b5fd;
+  font-size: 0.78rem;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.prediction-panel__refresh:hover:not(:disabled) {
+  background: rgba(124, 92, 255, 0.18);
+  border-color: rgba(196, 181, 253, 0.5);
+}
+.prediction-panel__refresh:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.prediction-panel__loading {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-top: 8px;
+}
+
+.prediction-panel__error {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fca5a5;
+  font-size: 0.9rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.prediction-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.prediction-skeleton__bar {
+  height: 56px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: skeleton 1.3s ease-in-out infinite;
+}
+.prediction-skeleton__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.prediction-skeleton__box {
+  height: 120px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: skeleton 1.5s ease-in-out infinite;
+}
+@keyframes skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.prediction-result {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: relative;
+}
+
+/* Verdict banner */
+.prediction-verdict {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(239, 68, 68, 0.08));
+  position: relative;
+  overflow: hidden;
+}
+.prediction-verdict--a::before,
+.prediction-verdict--b::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+}
+.prediction-verdict--a::before {
+  background: radial-gradient(400px 160px at 0% 50%, rgba(34, 211, 238, 0.18), transparent 70%);
+}
+.prediction-verdict--b::before {
+  background: radial-gradient(400px 160px at 100% 50%, rgba(239, 68, 68, 0.18), transparent 70%);
+}
+
+.prediction-verdict__team {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+}
+.prediction-verdict__team--b { text-align: right; align-items: flex-end; }
+.prediction-verdict__label {
+  font-size: 0.65rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.prediction-verdict__team--a .prediction-verdict__label { color: #67e8f9; }
+.prediction-verdict__team--b .prediction-verdict__label { color: #fca5a5; }
+
+.prediction-verdict__name {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.3rem;
+  letter-spacing: 1.2px;
+  color: var(--text-white);
+  line-height: 1;
+  text-transform: uppercase;
+}
+.prediction-verdict__prob {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 2.8rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 1px;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.prediction-verdict__team--a .prediction-verdict__prob {
+  background-image: linear-gradient(135deg, #22d3ee, #06b6d4);
+}
+.prediction-verdict__team--b .prediction-verdict__prob {
+  background-image: linear-gradient(135deg, #f87171, #ef4444);
+}
+.prediction-verdict__score {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.prediction-verdict__center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 14px;
+  text-align: center;
+  min-width: 150px;
+  position: relative;
+}
+.prediction-verdict__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.62rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #c4b5fd;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(196, 181, 253, 0.3);
+  background: rgba(124, 92, 255, 0.12);
+}
+.prediction-verdict__winner {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.55rem;
+  letter-spacing: 1px;
+  color: var(--text-white);
+  line-height: 1.05;
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.15);
+}
+.prediction-verdict__confidence {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+.prediction-verdict__confidence--high {
+  color: #bbf7d0;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+.prediction-verdict__confidence--mid {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+.prediction-verdict__confidence--low {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+.prediction-verdict__confidence--draw {
+  color: #d1d5db;
+  background: rgba(156, 163, 175, 0.15);
+  border: 1px solid rgba(156, 163, 175, 0.35);
+}
+
+/* Gauge */
+.prediction-gauge { display: flex; flex-direction: column; gap: 6px; }
+.prediction-gauge__track {
+  position: relative;
+  display: flex;
+  height: 42px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.prediction-gauge__fill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.15rem;
+  letter-spacing: 1.2px;
+  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+}
+.prediction-gauge__fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.25), transparent 60%);
+  pointer-events: none;
+}
+.prediction-gauge__fill--a {
+  background: linear-gradient(90deg, #0891b2 0%, #22d3ee 100%);
+  color: #041216;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.prediction-gauge__fill--b {
+  background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.prediction-gauge__center {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+.prediction-gauge__axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  padding: 0 4px;
+}
+
+/* AI reasoning card */
+.prediction-reasoning {
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.08), rgba(34, 211, 238, 0.04));
+  border: 1px solid rgba(124, 92, 255, 0.25);
+  position: relative;
+  overflow: hidden;
+}
+.prediction-reasoning::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(500px 160px at 100% 0%, rgba(124, 92, 255, 0.18), transparent 70%);
+  pointer-events: none;
+}
+.prediction-reasoning__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.prediction-reasoning__icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(124, 92, 255, 0.18);
+  color: #c4b5fd;
+  flex-shrink: 0;
+  border: 1px solid rgba(196, 181, 253, 0.3);
+}
+.prediction-reasoning__head-text { display: flex; flex-direction: column; gap: 2px; }
+.prediction-reasoning__title {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.25rem;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: #e9d5ff;
+  line-height: 1;
+}
+.prediction-reasoning__hint {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.prediction-reasoning__summary {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+  font-style: italic;
+  border-left: 3px solid rgba(196, 181, 253, 0.5);
+  padding-left: 12px;
+  margin-bottom: 12px;
+}
+.prediction-reasoning__warning {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: #fcd34d;
+}
+.prediction-reasoning__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fca5a5;
+  font-size: 0.85rem;
+}
+.prediction-reasoning__retry {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fecaca;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.prediction-reasoning__retry:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.prediction-reasoning__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prediction-reasoning__skeleton span {
+  height: 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
+  background-size: 200% 100%;
+  animation: skeleton 1.3s ease-in-out infinite;
+}
+.prediction-reasoning__skeleton span:nth-child(2) { width: 92%; }
+.prediction-reasoning__skeleton span:nth-child(3) { width: 74%; }
+
+.prediction-factors {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+.prediction-factor {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.prediction-factor--team_a { border-left: 3px solid rgba(34, 211, 238, 0.6); }
+.prediction-factor--team_b { border-left: 3px solid rgba(239, 68, 68, 0.6); }
+.prediction-factor--neutral { border-left: 3px solid rgba(196, 181, 253, 0.4); }
+.prediction-factor__icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+.prediction-factor--team_a .prediction-factor__icon { color: #67e8f9; background: rgba(34, 211, 238, 0.12); }
+.prediction-factor--team_b .prediction-factor__icon { color: #fca5a5; background: rgba(239, 68, 68, 0.12); }
+.prediction-factor__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.prediction-factor__title-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.prediction-factor__title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-white);
+}
+.prediction-factor__type {
+  font-size: 0.63rem;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+.prediction-factor__desc {
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+.prediction-factor__tag {
+  font-size: 0.62rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  align-self: center;
+}
+.prediction-factor__tag--team_a {
+  color: #041216;
+  background: linear-gradient(135deg, #22d3ee, #06b6d4);
+}
+.prediction-factor__tag--team_b {
+  color: #fff;
+  background: linear-gradient(135deg, #f87171, #ef4444);
+}
+
+/* Detail grid */
+.prediction-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.prediction-team {
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.prediction-team--a {
+  border-color: rgba(6, 182, 212, 0.35);
+  background: linear-gradient(180deg, rgba(6, 182, 212, 0.06), rgba(6, 182, 212, 0.02));
+}
+.prediction-team--b {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.06), rgba(239, 68, 68, 0.02));
+}
+
+.prediction-team__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.prediction-team__tag {
+  font-size: 0.62rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.prediction-team--a .prediction-team__tag { color: #67e8f9; }
+.prediction-team--b .prediction-team__tag { color: #fca5a5; }
+
+.prediction-team__title {
+  font-family: 'Teko', var(--font-heading);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-white);
+  font-size: 1.25rem;
+  line-height: 1;
+  margin-top: 2px;
+}
+.prediction-team__stat { display: flex; flex-direction: column; align-items: flex-end; }
+.prediction-team__stat-num {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+.prediction-team--a .prediction-team__stat-num { color: #22d3ee; }
+.prediction-team--b .prediction-team__stat-num { color: #ef4444; }
+.prediction-team__stat-lbl {
+  font-size: 0.62rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.prediction-player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.prediction-player-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+.prediction-player-row__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid rgba(255, 255, 255, 0.08);
+}
+.prediction-team--a .prediction-player-row__avatar { border-color: rgba(34, 211, 238, 0.5); }
+.prediction-team--b .prediction-player-row__avatar { border-color: rgba(239, 68, 68, 0.5); }
+.prediction-player-row__info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.prediction-player-row__name-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.prediction-player-row__name {
+  font-weight: 600;
+  color: var(--text-white);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prediction-player-row__score {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.prediction-player-row__streak {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.prediction-player-row__form-pct {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: 4px;
+}
+.form-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+.form-dot--w {
+  color: #bbf7d0;
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+.form-dot--l {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.form-dot--n {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.prediction-player-row__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.stat-chip {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.stat-chip--hero {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+.stat-chip--role {
+  color: #c4b5fd;
+  background: rgba(124, 92, 255, 0.08);
+  border-color: rgba(124, 92, 255, 0.25);
+}
+
+/* Weights footer */
+.prediction-weights {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  padding-top: 6px;
+}
+.prediction-weights__label {
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  opacity: 0.8;
+}
+.weight-chip {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  text-transform: capitalize;
+}
+.weight-chip strong { color: var(--text-white); }
+
+@media (max-width: 900px) {
+  .prediction-verdict {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+  .prediction-verdict__team--b { align-items: center; text-align: center; }
+  .prediction-detail-grid { grid-template-columns: 1fr; }
+}
+
 /* ============ RESPONSIVE ============ */
 @media (max-width: 900px) {
   .cta-row {
@@ -1633,19 +2885,24 @@ async function shareToWhatsApp() {
   .lane-node__line { display: none; }
 
   .map-marker {
-    max-width: 140px;
-    padding: 4px 6px;
+    max-width: 150px;
+    padding: 5px 6px;
     gap: 6px;
   }
   .map-marker__avatar {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
   }
   .map-marker__name {
-    font-size: 0.68rem;
+    font-size: 0.72rem;
+    font-weight: 700;
   }
   .map-marker__lane {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
+  }
+
+  .prediction-result__detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 

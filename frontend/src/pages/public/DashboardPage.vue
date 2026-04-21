@@ -37,7 +37,9 @@ onMounted(async () => {
   }
 })
 
-const featuredMvp = computed(() => stats.value?.top_mvps?.[0] ?? null)
+const featuredMvp = computed(
+  () => stats.value?.season_mvp ?? stats.value?.top_mvps?.[0] ?? null,
+)
 
 const totalKillsEstimate = computed(() => {
   if (!stats.value) return 0

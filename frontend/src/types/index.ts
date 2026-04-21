@@ -63,6 +63,8 @@ export interface DashboardStats {
   total_heroes: number
   total_mvps: number
   global_win_rate: number
+  /** Featured card: highest wins, then best avg rating among those tied */
+  season_mvp?: LeaderboardEntry | null
   top_winners: LeaderboardEntry[]
   top_mvps: LeaderboardEntry[]
   recent_matches: GameMatch[]
@@ -310,4 +312,254 @@ export interface FilterOptions {
   min_matches?: number
   sort_by?: string
   sort_dir?: 'asc' | 'desc'
+}
+
+export interface Patch {
+  id: number
+  version: string
+  name?: string | null
+  release_date: string
+  notes?: string | null
+  match_count?: number
+}
+
+export interface HeroPickStat {
+  hero_id: number
+  hero_name: string
+  icon_url?: string | null
+  picks: number
+  wins: number
+  win_rate: number
+}
+
+export interface HeroBanStat {
+  hero_id: number
+  hero_name: string
+  icon_url?: string | null
+  bans: number
+}
+
+export interface HeroPairStat {
+  hero_a: { id: number; name: string; icon_url?: string | null }
+  hero_b: { id: number; name: string; icon_url?: string | null }
+  matches: number
+  wins: number
+  win_rate: number
+}
+
+export interface HeroCounterStat {
+  hero: { id: number; name: string; icon_url?: string | null }
+  enemy: { id: number; name: string; icon_url?: string | null }
+  matches: number
+  wins: number
+  win_rate: number
+}
+
+export interface DraftOverview {
+  top_picks: HeroPickStat[]
+  top_bans: HeroBanStat[]
+  hero_pair_synergy: HeroPairStat[]
+  hero_counters: HeroCounterStat[]
+}
+
+export interface DraftRecommendation {
+  hero: { id: number; name: string; icon_url?: string | null; role_id?: number | null }
+  synergy_rate: number
+  counter_rate: number
+  score: number
+  sample: number
+}
+
+export interface MetaComparisonHero extends HeroPickStat {
+  previous_win_rate: number | null
+  delta_win_rate: number | null
+  previous_picks: number
+  delta_picks: number
+}
+
+export interface MetaComparisonRole {
+  role_id: number
+  role_name: string
+  usage: number
+  win_rate: number
+  previous_win_rate: number | null
+  delta_win_rate: number | null
+}
+
+export interface MetaComparisonPlayer {
+  player_id: number
+  username: string
+  avatar_url?: string | null
+  matches_played: number
+  wins: number
+  win_rate: number
+  avg_rating: number | null
+  previous_win_rate: number | null
+  delta_win_rate: number | null
+  previous_avg_rating: number | null
+  delta_avg_rating: number | null
+}
+
+export interface MetaOverview {
+  current_patch: Patch | null
+  previous_patch: Patch | null
+  hero_performance: MetaComparisonHero[]
+  role_performance: MetaComparisonRole[]
+  player_performance: MetaComparisonPlayer[]
+}
+
+export interface PlayerFormCard {
+  id: number
+  username: string
+  avatar_url?: string | null
+  total_matches: number
+  overall_win_rate: number
+  recent_form: string[]
+  recent_win_rate: number
+}
+
+export interface HeadToHeadEntry {
+  match_id: number
+  match_date: string
+  a: {
+    team: 'team_a' | 'team_b'
+    hero_id?: number
+    hero?: string
+    hero_icon?: string | null
+    role?: string
+    kills?: number
+    deaths?: number
+    assists?: number
+    kda: string
+    rating: number | null
+    result: 'win' | 'lose'
+  }
+  b: {
+    team: 'team_a' | 'team_b'
+    hero_id?: number
+    hero?: string
+    hero_icon?: string | null
+    role?: string
+    kills?: number
+    deaths?: number
+    assists?: number
+    kda: string
+    rating: number | null
+    result: 'win' | 'lose'
+  }
+}
+
+export interface HeadToHeadRivalryRow {
+  wins: number
+  win_rate: number
+  avg_rating: number | null
+  avg_kills: number
+  avg_deaths: number
+  avg_assists: number
+  kda_ratio: number
+}
+
+export interface HeadToHeadRivalry {
+  leader: 'a' | 'b' | 'tie'
+  reason?: string
+  leader_label: string
+  games: number
+  dominance_pct_a: number
+  player_a: HeadToHeadRivalryRow | null
+  player_b: HeadToHeadRivalryRow | null
+  streak: { side: 'a' | 'b'; count: number; label: string } | null
+}
+
+export interface HeadToHeadPlayers {
+  player_a: PlayerFormCard
+  player_b: PlayerFormCard
+  summary: {
+    total_matches: number
+    as_opponents: number
+    as_teammates: number
+    player_a_wins_vs_b: number
+    player_b_wins_vs_a: number
+  }
+  rivalry?: HeadToHeadRivalry
+  head_to_head: HeadToHeadEntry[]
+  as_teammates: HeadToHeadEntry[]
+  favorite_heroes: {
+    a: { hero?: string; hero_icon?: string | null; matches: number; wins: number; win_rate: number }[]
+    b: { hero?: string; hero_icon?: string | null; matches: number; wins: number; win_rate: number }[]
+  }
+  favorite_heroes_h2h?: {
+    a: { hero?: string; hero_icon?: string | null; matches: number; wins: number; win_rate: number }[]
+    b: { hero?: string; hero_icon?: string | null; matches: number; wins: number; win_rate: number }[]
+  }
+}
+
+export interface TeamComparison {
+  summary: {
+    total_matches: number
+    team_a_wins: number
+    team_b_wins: number
+    team_a_win_rate: number
+  }
+  matches: {
+    match_id: number
+    match_date: string
+    winner: 'team_a' | 'team_b'
+    roster_a: { player?: string; hero?: string; hero_icon?: string | null }[]
+    roster_b: { player?: string; hero?: string; hero_icon?: string | null }[]
+  }[]
+}
+
+export interface PredictionSlot {
+  player_id: number
+  hero_id?: number | null
+  role_id?: number | null
+}
+
+export interface PredictionPlayerResult {
+  player_id: number
+  username: string | null
+  avatar_url?: string | null
+  hero_id: number | null
+  role_id: number | null
+  score: number
+  recent_form: { matches: number; wins: number; rate: number; streak: string[] }
+  overall: { matches: number; wins: number; rate: number }
+  hero_mastery: { matches: number; wins: number; rate: number } | null
+  role_mastery: { matches: number; wins: number; rate: number } | null
+}
+
+export interface PredictionResponse {
+  team_a: {
+    score: number
+    win_probability: number
+    players: PredictionPlayerResult[]
+  }
+  team_b: {
+    score: number
+    win_probability: number
+    players: PredictionPlayerResult[]
+  }
+  confidence: number
+  weights: Record<string, number>
+}
+
+export interface PredictionReasoningFactor {
+  type: 'form' | 'hero_mastery' | 'role_mastery' | 'overall_winrate' | 'matchup' | 'synergy'
+  team: 'team_a' | 'team_b' | 'neutral'
+  title: string
+  description: string
+}
+
+export interface PredictionReasoningResponse {
+  favored_team: 'team_a' | 'team_b' | 'draw'
+  summary: string
+  key_factors: PredictionReasoningFactor[]
+  model?: string
+  warning?: string
+  raw?: string
+}
+
+export interface PredictionReasoningRequestTeam {
+  name?: string
+  players: PredictionSlot[]
 }

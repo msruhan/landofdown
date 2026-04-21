@@ -36,6 +36,21 @@ const router = createRouter({
           component: () => import('@/pages/public/BattlePage.vue'),
         },
         {
+          path: 'drafts',
+          name: 'drafts',
+          component: () => import('@/pages/public/DraftsPage.vue'),
+        },
+        {
+          path: 'meta',
+          name: 'meta',
+          component: () => import('@/pages/public/MetaPage.vue'),
+        },
+        {
+          path: 'head-to-head',
+          name: 'head-to-head',
+          component: () => import('@/pages/public/HeadToHeadPage.vue'),
+        },
+        {
           path: 'matches/:id',
           name: 'match-detail',
           component: () => import('@/pages/public/MatchDetailPage.vue'),

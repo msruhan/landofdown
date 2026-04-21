@@ -2,18 +2,30 @@ import axios from 'axios'
 import type {
   AuthUser,
   DashboardStats,
+  DraftOverview,
+  DraftRecommendation,
   FilterOptions,
   GameMatch,
+  HeadToHeadPlayers,
   Hero,
+  HeroCounterStat,
+  HeroPairStat,
   HeroStats,
   LoginCredentials,
   MatchCreatePayload,
+  MetaOverview,
   PaginatedResponse,
+  Patch,
   Player,
   PlayerStats,
+  PredictionReasoningRequestTeam,
+  PredictionReasoningResponse,
+  PredictionResponse,
+  PredictionSlot,
   RankingEntry,
   Role,
   RoleStats,
+  TeamComparison,
   TrendPoint,
   BattleAiRequest,
   BattleAiResponse,
@@ -109,6 +121,59 @@ export const rankingsApi = {
 // Battle AI
 export const battleApi = {
   aiRandomize: (data: BattleAiRequest) => api.post<BattleAiResponse>('/battle/ai-randomize', data),
+}
+
+// Draft Analysis (Pick/Ban)
+export const draftApi = {
+  getOverview: (patchId?: number) =>
+    api.get<DraftOverview>('/drafts/overview', { params: patchId ? { patch_id: patchId } : {} }),
+  getSynergy: (patchId?: number, limit = 20) =>
+    api.get<{ data: HeroPairStat[] }>('/drafts/synergy', { params: { patch_id: patchId, limit } }),
+  getCounters: (patchId?: number, limit = 20) =>
+    api.get<{ data: HeroCounterStat[] }>('/drafts/counters', { params: { patch_id: patchId, limit } }),
+  recommend: (allyHeroIds: number[], enemyHeroIds: number[], limit = 10) =>
+    api.post<{ data: DraftRecommendation[] }>('/drafts/recommend', {
+      ally_hero_ids: allyHeroIds,
+      enemy_hero_ids: enemyHeroIds,
+      limit,
+    }),
+  getMatchDraft: (matchId: number) => api.get(`/drafts/match/${matchId}`),
+}
+
+// Patches / Meta Tracker
+export const patchesApi = {
+  list: () => api.get<{ data: Patch[] }>('/patches'),
+  get: (id: number) => api.get<{ data: Patch }>(`/patches/${id}`),
+  meta: (patchId?: number) => api.get<MetaOverview>('/patches/meta', { params: patchId ? { patch_id: patchId } : {} }),
+  create: (data: Partial<Patch>) => api.post<{ data: Patch }>('/admin/patches', data),
+  update: (id: number, data: Partial<Patch>) => api.put<{ data: Patch }>(`/admin/patches/${id}`, data),
+  remove: (id: number) => api.delete(`/admin/patches/${id}`),
+}
+
+// Head-to-Head
+export const headToHeadApi = {
+  players: (playerAId: number, playerBId: number) =>
+    api.get<HeadToHeadPlayers>('/head-to-head/players', {
+      params: { player_a_id: playerAId, player_b_id: playerBId },
+    }),
+  teams: (teamA: number[], teamB: number[]) =>
+    api.post<TeamComparison>('/head-to-head/teams', { team_a: teamA, team_b: teamB }),
+}
+
+// Win Prediction
+export const predictionApi = {
+  predict: (teamA: PredictionSlot[], teamB: PredictionSlot[]) =>
+    api.post<PredictionResponse>('/prediction/predict', { team_a: teamA, team_b: teamB }),
+  reasoning: (
+    teamA: PredictionReasoningRequestTeam,
+    teamB: PredictionReasoningRequestTeam,
+    prediction?: PredictionResponse | null,
+  ) =>
+    api.post<PredictionReasoningResponse>('/prediction/reasoning', {
+      team_a: teamA,
+      team_b: teamB,
+      prediction: prediction ?? null,
+    }),
 }
 
 // Screenshots
