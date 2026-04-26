@@ -51,7 +51,13 @@ const countdown = computed(() => {
 
 const hasStarted = computed(() => new Date(props.session.starts_at).getTime() <= now.value)
 
-const typeMeta = computed(() => {
+const defaultTypeMeta = {
+  label: 'Classic',
+  color: '#00ff87',
+  icon: 'M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z M12 7a3 3 0 1 0 0 6',
+}
+
+const typeMeta = computed<{ label: string; color: string; icon: string }>(() => {
   const map: Record<string, { label: string; color: string; icon: string }> = {
     push_rank: { label: 'Push Rank', color: '#ff3d7f', icon: 'M12 2L3 7v6c0 5 4 9 9 11c5-2 9-6 9-11V7z M8 12l3 3l5-6' },
     classic: { label: 'Classic', color: '#00ff87', icon: 'M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z M12 7a3 3 0 1 0 0 6' },
@@ -59,7 +65,7 @@ const typeMeta = computed(() => {
     tournament: { label: 'Tournament', color: '#ffd86b', icon: 'M8 21h8 M12 17v4 M7 4h10v3a5 5 0 0 1-5 5a5 5 0 0 1-5-5z' },
     coaching: { label: 'Coaching', color: '#6ab8ff', icon: 'M17 20h5v-2a4 4 0 0 0-3-3.87 M9 20H4v-2a4 4 0 0 1 3-3.87 M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8' },
   }
-  return map[props.session.type] || map.classic
+  return map[props.session.type] ?? defaultTypeMeta
 })
 
 const vibeLabel = computed(() => {

@@ -115,11 +115,13 @@ const trendAvg = computed(() => {
 })
 const trendLast = computed(() => {
   const s = trendSeries.value
-  return s.length ? Number(s[s.length - 1].rating) || 0 : 0
+  const last = s.at(-1)
+  return last ? Number(last.rating) || 0 : 0
 })
 const trendLastResult = computed(() => {
   const s = trendSeries.value
-  return s.length ? s[s.length - 1].result : null
+  const last = s.at(-1)
+  return last?.result ?? null
 })
 const trendWins = computed(() => trendSeries.value.filter(t => t.result === 'win').length)
 
@@ -272,8 +274,9 @@ const achievementVisuals = computed(() => {
       src = achievementImagePool[index % achievementImagePool.length]
     }
 
-    used.add(src)
-    return { badge, src }
+    const finalSrc = src ?? achievementBadgeImages.epicRound
+    used.add(finalSrc)
+    return { badge, src: finalSrc }
   })
 })
 </script>
