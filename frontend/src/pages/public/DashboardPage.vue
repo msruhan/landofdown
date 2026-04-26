@@ -1,45 +1,87 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { Bar, Line } from 'vue-chartjs'
+import { Bar } from 'vue-chartjs'
 import {
   Chart as ChartJS,
   BarElement,
-  LineElement,
-  PointElement,
   LinearScale,
   CategoryScale,
-  Filler,
   Tooltip,
   Legend,
 } from 'chart.js'
-import { statisticsApi } from '@/services/api'
-import type { DashboardStats } from '@/types'
+import { statisticsApi, patchesApi } from '@/services/api'
+import type { DashboardStats, Patch } from '@/types'
 import { getAvatarUrl, handleAvatarError } from '@/utils/avatar'
 import StatCard from '@/components/StatCard.vue'
 import LeaderboardCard from '@/components/LeaderboardCard.vue'
 import MatchResultCard from '@/components/MatchResultCard.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
-ChartJS.register(BarElement, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend)
+ChartJS.register(BarElement, LinearScale, CategoryScale, Tooltip, Legend)
 
 const stats = ref<DashboardStats | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
+const selectedPatchId = ref<number | undefined>(undefined)
+const patchOptions = ref<Patch[]>([])
 
-onMounted(async () => {
+async function loadDashboard() {
   try {
-    const response = await statisticsApi.getDashboard()
+    const response = await statisticsApi.getDashboard(selectedPatchId.value ? { patch_id: selectedPatchId.value } : {})
     stats.value = response.data
   } catch {
     error.value = 'Failed to load dashboard data'
   } finally {
     loading.value = false
   }
+}
+
+onMounted(async () => {
+  try {
+    const patchRes = await patchesApi.list()
+    patchOptions.value = patchRes.data.data ?? []
+  } catch {
+    patchOptions.value = []
+  }
+  await loadDashboard()
 })
 
 const featuredMvp = computed(
   () => stats.value?.season_mvp ?? stats.value?.top_mvps?.[0] ?? null,
 )
+
+const bestWinRatePlayer = computed(() => {
+  const rows = stats.value?.top_winners ?? []
+  if (!rows.length) return null
+  return rows
+    .slice()
+    .sort((a, b) => {
+      if (b.win_rate !== a.win_rate) return b.win_rate - a.win_rate
+      if (b.matches_played !== a.matches_played) return b.matches_played - a.matches_played
+      return b.wins - a.wins
+    })[0] ?? null
+})
+
+const highestRatedPlayer = computed(() => {
+  const rows = [...(stats.value?.top_winners ?? []), ...(stats.value?.top_mvps ?? [])]
+  if (!rows.length) return null
+  const unique = new Map<number, typeof rows[number]>()
+  for (const row of rows) {
+    if (!unique.has(row.player_id)) unique.set(row.player_id, row)
+  }
+  return [...unique.values()]
+    .sort((a, b) => {
+      if (b.avg_rating !== a.avg_rating) return b.avg_rating - a.avg_rating
+      return b.matches_played - a.matches_played
+    })[0] ?? null
+})
+
+const topMvpPlayer = computed(() => stats.value?.top_mvps?.[0] ?? null)
+
+const avgMatchesPerPlayer = computed(() => {
+  if (!stats.value || stats.value.total_players === 0) return 0
+  return Number((stats.value.total_matches / stats.value.total_players).toFixed(1))
+})
 
 const totalKillsEstimate = computed(() => {
   if (!stats.value) return 0
@@ -48,28 +90,6 @@ const totalKillsEstimate = computed(() => {
     : 5
   return Math.round(avgKills * stats.value.total_matches * 5)
 })
-
-function getTrendChartData() {
-  if (!stats.value?.win_trend?.length) return null
-  return {
-    labels: stats.value.win_trend.map((t) => t.label),
-    datasets: [
-      {
-        label: 'Result',
-        data: stats.value.win_trend.map((t) => t.value),
-        borderColor: '#00ff87',
-        backgroundColor: 'rgba(0, 255, 135, 0.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 4,
-        pointBackgroundColor: stats.value.win_trend.map((t) =>
-          t.result === 'win' ? '#00ff87' : '#ef4444',
-        ),
-        borderWidth: 2,
-      },
-    ],
-  }
-}
 
 function getHeroChartData() {
   if (!stats.value?.most_used_heroes?.length) return null
@@ -174,13 +194,26 @@ const barOptions = {
         </p>
         <div class="hero-banner__actions">
           <router-link to="/ranking" class="hero-btn hero-btn--primary">
-            <span class="hero-btn__icon">🏆</span>
+            <svg class="hero-btn__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 4h10v3a5 5 0 01-10 0V4zM7 7H5a2 2 0 002 2M17 7h2a2 2 0 01-2 2M12 12v4M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
             View Rankings
           </router-link>
           <router-link to="/statistics" class="hero-btn hero-btn--secondary">
-            <span class="hero-btn__icon">📊</span>
+            <svg class="hero-btn__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 19h16M7 17V9M12 17V5M17 17v-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
             View Statistics
           </router-link>
+        </div>
+        <div class="hero-banner__season">
+          <label class="hero-banner__season-label">Season / Split</label>
+          <select v-model.number="selectedPatchId" class="form-select hero-banner__season-select" @change="loading = true; loadDashboard()">
+            <option :value="undefined">All Seasons</option>
+            <option v-for="patch in patchOptions" :key="patch.id" :value="patch.id">
+              {{ patch.version }}{{ patch.name ? ` - ${patch.name}` : '' }}
+            </option>
+          </select>
         </div>
       </div>
     </section>
@@ -197,11 +230,39 @@ const barOptions = {
       <!-- ========== SECTION 2: STAT CARDS ROW ========== -->
       <section class="section">
         <div class="grid-5 stagger-children">
-          <StatCard title="Total Matches" :value="stats.total_matches" icon="⚔" color="#00ff87" />
-          <StatCard title="Total Players" :value="stats.total_players" icon="👥" color="#06b6d4" />
-          <StatCard title="Heroes Used" :value="stats.total_heroes" icon="🦸" color="#f59e0b" />
-          <StatCard title="Total MVPs" :value="stats.total_mvps" icon="🏆" color="#ffd700" />
-          <StatCard title="Global Win Rate" :value="stats.global_win_rate.toFixed(1) + '%'" icon="📈" color="#10b981" />
+          <StatCard title="Total Matches" :value="stats.total_matches" icon="matches" color="#00ff87" />
+          <StatCard title="Total Players" :value="stats.total_players" icon="players" color="#06b6d4" />
+          <StatCard title="Heroes Used" :value="stats.total_heroes" icon="heroes" color="#f59e0b" />
+          <StatCard title="Total MVPs" :value="stats.total_mvps" icon="mvps" color="#ffd700" />
+          <StatCard title="Global Win Rate" :value="stats.global_win_rate.toFixed(1) + '%'" icon="winrate" color="#10b981" />
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <h2 class="section-title">Key Insights</h2>
+        </div>
+        <div class="grid-4 stagger-children">
+          <article class="insight-card card">
+            <p class="insight-card__label">Best Win Rate</p>
+            <p class="insight-card__value">{{ bestWinRatePlayer?.username ?? '-' }}</p>
+            <p class="insight-card__meta">{{ bestWinRatePlayer ? `${bestWinRatePlayer.win_rate.toFixed(1)}% · ${bestWinRatePlayer.matches_played} match` : '-' }}</p>
+          </article>
+          <article class="insight-card card">
+            <p class="insight-card__label">Highest Avg Rating</p>
+            <p class="insight-card__value">{{ highestRatedPlayer?.username ?? '-' }}</p>
+            <p class="insight-card__meta">{{ highestRatedPlayer ? `${highestRatedPlayer.avg_rating.toFixed(1)} rating` : '-' }}</p>
+          </article>
+          <article class="insight-card card">
+            <p class="insight-card__label">Most MVP</p>
+            <p class="insight-card__value">{{ topMvpPlayer?.username ?? '-' }}</p>
+            <p class="insight-card__meta">{{ topMvpPlayer ? `${topMvpPlayer.mvp_count} MVP` : '-' }}</p>
+          </article>
+          <article class="insight-card card">
+            <p class="insight-card__label">Avg Matches / Player</p>
+            <p class="insight-card__value">{{ avgMatchesPerPlayer }}</p>
+            <p class="insight-card__meta">Overall activity</p>
+          </article>
         </div>
       </section>
 
@@ -286,41 +347,100 @@ const barOptions = {
           <div class="live-banner__track">
             <div class="live-banner__scroll">
               <span class="live-banner__item">⚔ {{ totalKillsEstimate.toLocaleString() }} total kills recorded</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M8 6L4 3L2 7L6 10M16 18L20 21L22 17L18 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M10 8L14 12M14 12L10 16M14 12H6M14 12H18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                {{ totalKillsEstimate.toLocaleString() }} total kills recorded
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">🎮 {{ stats.total_matches }} matches played</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M6 9h12a3 3 0 013 3v4a2 2 0 01-2 2h-2l-2-2H9l-2 2H5a2 2 0 01-2-2v-4a3 3 0 013-3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                  <path d="M8 13h3M9.5 11.5v3M16 12h.01M18 14h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                {{ stats.total_matches }} matches played
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">🏆 {{ stats.total_mvps }} MVPs awarded</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M7 4h10v3a5 5 0 01-10 0V4zM7 7H5a2 2 0 002 2M17 7h2a2 2 0 01-2 2M12 12v4M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                {{ stats.total_mvps }} MVPs awarded
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">👥 {{ stats.total_players }} players competing</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M16 7a3 3 0 110 6a3 3 0 010-6zM8 8a4 4 0 110 8a4 4 0 010-8z" stroke="currentColor" stroke-width="1.8"/>
+                  <path d="M3 19a5 5 0 015-5h1a5 5 0 015 5M14 19a4 4 0 014-4h.5A3.5 3.5 0 0122 18.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                {{ stats.total_players }} players competing
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">📈 {{ stats.global_win_rate.toFixed(1) }}% global win rate</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 19h16M7 16l3-4l3 2l4-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M17 8h3v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                {{ stats.global_win_rate.toFixed(1) }}% global win rate
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">🦸 {{ stats.total_heroes }} heroes in the pool</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3l2.4 3.6L19 8l-3 3.4l.6 4.8L12 14.4L7.4 16.2L8 11.4L5 8l4.6-1.4L12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                </svg>
+                {{ stats.total_heroes }} heroes in the pool
+              </span>
               <span class="live-banner__divider">◆</span>
               <!-- duplicate for seamless loop -->
-              <span class="live-banner__item">⚔ {{ totalKillsEstimate.toLocaleString() }} total kills recorded</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M8 6L4 3L2 7L6 10M16 18L20 21L22 17L18 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M10 8L14 12M14 12L10 16M14 12H6M14 12H18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                {{ totalKillsEstimate.toLocaleString() }} total kills recorded
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">🎮 {{ stats.total_matches }} matches played</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M6 9h12a3 3 0 013 3v4a2 2 0 01-2 2h-2l-2-2H9l-2 2H5a2 2 0 01-2-2v-4a3 3 0 013-3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                  <path d="M8 13h3M9.5 11.5v3M16 12h.01M18 14h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                {{ stats.total_matches }} matches played
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">🏆 {{ stats.total_mvps }} MVPs awarded</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M7 4h10v3a5 5 0 01-10 0V4zM7 7H5a2 2 0 002 2M17 7h2a2 2 0 01-2 2M12 12v4M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                {{ stats.total_mvps }} MVPs awarded
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">👥 {{ stats.total_players }} players competing</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M16 7a3 3 0 110 6a3 3 0 010-6zM8 8a4 4 0 110 8a4 4 0 010-8z" stroke="currentColor" stroke-width="1.8"/>
+                  <path d="M3 19a5 5 0 015-5h1a5 5 0 015 5M14 19a4 4 0 014-4h.5A3.5 3.5 0 0122 18.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                {{ stats.total_players }} players competing
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">📈 {{ stats.global_win_rate.toFixed(1) }}% global win rate</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 19h16M7 16l3-4l3 2l4-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M17 8h3v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                {{ stats.global_win_rate.toFixed(1) }}% global win rate
+              </span>
               <span class="live-banner__divider">◆</span>
-              <span class="live-banner__item">🦸 {{ stats.total_heroes }} heroes in the pool</span>
+              <span class="live-banner__item">
+                <svg class="live-banner__item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3l2.4 3.6L19 8l-3 3.4l.6 4.8L12 14.4L7.4 16.2L8 11.4L5 8l4.6-1.4L12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                </svg>
+                {{ stats.total_heroes }} heroes in the pool
+              </span>
               <span class="live-banner__divider">◆</span>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ========== SECTION 6: WIN TREND CHART ========== -->
-      <section v-if="getTrendChartData()" class="section">
-        <h2 class="section-title">Win Trend</h2>
-        <div class="chart-panel">
-          <div class="chart-panel__inner">
-            <Line :data="getTrendChartData()!" :options="chartOptions" />
           </div>
         </div>
       </section>
@@ -363,7 +483,9 @@ const barOptions = {
         <div class="grid-3 stagger-children">
           <router-link to="/statistics" class="cta-card">
             <div class="cta-card__icon-wrap">
-              <span class="cta-card__icon">📊</span>
+              <svg class="cta-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 19h16M7 17V9M12 17V5M17 17v-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </div>
             <h3 class="cta-card__title">Player Statistics</h3>
             <p class="cta-card__desc">Dive deep into individual player performance, KDA ratios, hero preferences and match history.</p>
@@ -372,7 +494,9 @@ const barOptions = {
 
           <router-link to="/ranking" class="cta-card">
             <div class="cta-card__icon-wrap">
-              <span class="cta-card__icon">🏆</span>
+              <svg class="cta-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M7 4h10v3a5 5 0 01-10 0V4zM7 7H5a2 2 0 002 2M17 7h2a2 2 0 01-2 2M12 12v4M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </div>
             <h3 class="cta-card__title">Leaderboard</h3>
             <p class="cta-card__desc">See who dominates the rankings. Compare win rates, MVP counts, and overall ratings.</p>
@@ -381,7 +505,10 @@ const barOptions = {
 
           <router-link to="/statistics" class="cta-card">
             <div class="cta-card__icon-wrap">
-              <span class="cta-card__icon">⚔</span>
+              <svg class="cta-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M8 6L4 3L2 7L6 10M16 18L20 21L22 17L18 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M10 8L14 12M14 12L10 16M14 12H6M14 12H18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
             </div>
             <h3 class="cta-card__title">Match History</h3>
             <p class="cta-card__desc">Browse all recorded matches, team compositions, and detailed game results.</p>
@@ -606,6 +733,25 @@ const barOptions = {
   animation: actions-rise 0.8s ease-out 0.6s both;
 }
 
+.hero-banner__season {
+  max-width: 360px;
+  margin: 16px auto 0;
+}
+
+.hero-banner__season-label {
+  display: block;
+  font-family: var(--font-heading);
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.hero-banner__season-select {
+  width: 100%;
+}
+
 @keyframes actions-rise {
   from { opacity: 0; transform: translateY(15px); }
   to { opacity: 1; transform: translateY(0); }
@@ -629,7 +775,8 @@ const barOptions = {
 }
 
 .hero-btn__icon {
-  font-size: 1.1rem;
+  width: 18px;
+  height: 18px;
 }
 
 .hero-btn--primary {
@@ -860,6 +1007,33 @@ const barOptions = {
   box-shadow: 0 0 15px rgba(0, 255, 135, 0.1);
 }
 
+.insight-card {
+  padding: 18px;
+  background: linear-gradient(150deg, rgba(12, 30, 24, 0.95), rgba(7, 10, 9, 0.96));
+}
+
+.insight-card__label {
+  margin: 0 0 8px;
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.insight-card__value {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  color: var(--text-white);
+}
+
+.insight-card__meta {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: var(--green-neon);
+}
+
 /* ============================================
    SECTION 5: LIVE STATS BANNER
    ============================================ */
@@ -934,6 +1108,16 @@ const barOptions = {
   font-weight: 500;
   color: var(--text-primary);
   letter-spacing: 0.5px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-banner__item-icon {
+  width: 14px;
+  height: 14px;
+  color: #8aa39a;
   flex-shrink: 0;
 }
 
@@ -1041,7 +1225,9 @@ const barOptions = {
 }
 
 .cta-card__icon {
-  font-size: 1.6rem;
+  width: 28px;
+  height: 28px;
+  color: var(--green-neon);
 }
 
 .cta-card__title {

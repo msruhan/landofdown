@@ -11,6 +11,17 @@ const props = defineProps<{
 
 const visible = ref(false)
 
+function normalizedIcon(icon?: string): string {
+  if (!icon) return ''
+  const value = icon.toLowerCase().trim()
+  if (value.includes('match') || value === '⚔') return 'matches'
+  if (value.includes('player') || value === '👥') return 'players'
+  if (value.includes('hero') || value === '🦸') return 'heroes'
+  if (value.includes('mvp') || value === '🏆') return 'mvps'
+  if (value.includes('win') || value.includes('rate') || value === '📈') return 'winrate'
+  return value
+}
+
 onMounted(() => {
   requestAnimationFrame(() => {
     visible.value = true
@@ -27,7 +38,25 @@ onMounted(() => {
     <div class="stat-card__scanlines"></div>
     <div class="stat-card__header">
       <span class="stat-card__icon-wrap" v-if="icon">
-        <span class="stat-card__icon">{{ icon }}</span>
+        <svg v-if="normalizedIcon(icon) === 'matches'" class="stat-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M8 6L4 3L2 7L6 10M16 18L20 21L22 17L18 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10 8L14 12M14 12L10 16M14 12H6M14 12H18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <svg v-else-if="normalizedIcon(icon) === 'players'" class="stat-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M16 7a3 3 0 110 6a3 3 0 010-6zM8 8a4 4 0 110 8a4 4 0 010-8z" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M3 19a5 5 0 015-5h1a5 5 0 015 5M14 19a4 4 0 014-4h.5A3.5 3.5 0 0122 18.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <svg v-else-if="normalizedIcon(icon) === 'heroes'" class="stat-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3l2.4 3.6L19 8l-3 3.4l.6 4.8L12 14.4L7.4 16.2L8 11.4L5 8l4.6-1.4L12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          <path d="M9 18h6M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <svg v-else-if="normalizedIcon(icon) === 'mvps'" class="stat-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M7 4h10v3a5 5 0 01-10 0V4zM7 7H5a2 2 0 002 2M17 7h2a2 2 0 01-2 2M12 12v4M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <svg v-else-if="normalizedIcon(icon) === 'winrate'" class="stat-card__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 19h16M7 16l3-4l3 2l4-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M17 8h3v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </span>
       <span class="stat-card__title">{{ title }}</span>
     </div>
@@ -116,7 +145,9 @@ onMounted(() => {
 }
 
 .stat-card__icon {
-  font-size: 1.1rem;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
 }
 
 .stat-card__title {

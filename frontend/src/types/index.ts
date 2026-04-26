@@ -81,6 +81,8 @@ export interface LeaderboardEntry {
   losses: number
   win_rate: number
   mvp_count: number
+  mvp_win_count: number
+  mvp_lose_count: number
   avg_rating: number
   avg_kills: number
   avg_deaths: number
@@ -95,17 +97,25 @@ export interface KDA {
 
 export interface RankingEntry {
   rank?: number
+  previous_rank?: number | null
+  rank_change?: number
   player_id: number
   username: string
+  avatar_url?: string | null
   matches_played: number
   wins: number
   losses: number
   win_rate: number
   mvp_count: number
+  mvp_win_count?: number
+  mvp_lose_count?: number
   avg_rating: number
   total_kda: KDA
   avg_kda: KDA
+  recent_form?: string[]
+  form_meter?: 'hot' | 'warm' | 'cold'
   top_hero?: string
+  top_hero_icon?: string | null
   top_role?: string
 }
 
@@ -124,6 +134,16 @@ export interface PlayerStats {
   recent_performance: RecentPerformance[]
   rating_trend: { match_id: number; rating: number }[]
   current_streak: { type: 'win' | 'lose' | null; count: number }
+  recent_form?: string[]
+  form_meter?: 'hot' | 'warm' | 'cold'
+  recommended_role?: { role: Role; times_played: number; win_rate: number } | null
+  achievements?: {
+    key: string
+    label: string
+    description?: string
+    tier?: 'legendary' | 'epic' | 'rare' | 'common'
+    icon?: string
+  }[]
   mvp_rate: number
   hero_pool_diversity: number
   first_match_date: string | null
@@ -148,7 +168,7 @@ export interface HeroUsed {
 export interface RecentPerformance {
   match_id: number
   match_date: string
-  hero: string
+  hero: { id: number; name: string; icon_url?: string | null } | null
   role: string
   kills: number
   deaths: number
@@ -239,6 +259,205 @@ export interface AuthUser {
   id: number
   name: string
   email: string
+  username?: string | null
+  avatar_url?: string | null
+  is_admin?: boolean
+}
+
+export interface RegisterPayload {
+  name: string
+  username?: string | null
+  email: string
+  password: string
+  password_confirmation: string
+  avatar_url?: string | null
+}
+
+// -------------------- Mabar Lounge --------------------
+
+export type MabarType = 'push_rank' | 'classic' | 'brawl' | 'tournament' | 'coaching'
+export type MabarVibe = 'sweaty' | 'chill' | 'tryhard' | 'learning' | 'event'
+export type MabarRank = 'any' | 'epic' | 'legend' | 'mythic' | 'mythic_honor' | 'mythic_glory' | 'mythic_immortal'
+export type MabarRole = 'any' | 'tank' | 'jungle' | 'roam' | 'mid' | 'exp' | 'gold' | 'support'
+export type MabarStatus = 'open' | 'full' | 'live' | 'closed' | 'expired' | 'cancelled'
+export type MabarVoice = 'discord' | 'in_game' | 'chat'
+export type MabarRecurrence = 'none' | 'weekly'
+
+export interface MabarUser {
+  id: number
+  name: string
+  username?: string | null
+  avatar_url?: string | null
+  is_admin?: boolean
+}
+
+export interface MabarSlotDTO {
+  id: number
+  slot_index: number
+  role_preference: MabarRole
+  status: 'open' | 'pending' | 'confirmed' | 'left'
+  joined_at?: string | null
+  user: MabarUser | null
+}
+
+export interface MabarRatingDTO {
+  id: number
+  stars: number
+  tags: string[]
+  comment?: string | null
+  from_user: MabarUser | null
+  to_user: MabarUser | null
+  created_at?: string
+}
+
+export interface MabarSessionDTO {
+  id: number
+  title: string
+  type: MabarType
+  vibe?: MabarVibe | null
+  rank_requirement: MabarRank
+  starts_at: string
+  ends_at?: string | null
+  recurrence: MabarRecurrence
+  recurrence_days?: string[] | null
+  max_slots: number
+  filled_slots: number
+  pending_requests?: number
+  status: MabarStatus
+  voice_platform?: MabarVoice | null
+  discord_link?: string | null
+  room_id?: string | null
+  notes?: string | null
+  is_featured: boolean
+  invite_code?: string
+  synergy_with_viewer?: {
+    matches: number
+    wins_hint: number
+    avg_rating_hint?: number | null
+  } | null
+  host: MabarUser | null
+  slots: MabarSlotDTO[]
+  ratings?: MabarRatingDTO[]
+  created_at?: string
+}
+
+export interface MabarSessionPayload {
+  title: string
+  type: MabarType
+  vibe?: MabarVibe | null
+  rank_requirement?: MabarRank
+  starts_at: string
+  ends_at?: string | null
+  recurrence?: MabarRecurrence
+  recurrence_days?: string[] | null
+  max_slots?: number
+  voice_platform?: MabarVoice | null
+  discord_link?: string | null
+  room_id?: string | null
+  notes?: string | null
+  slot_roles?: MabarRole[]
+}
+
+export interface MabarSignalDTO {
+  user: MabarUser
+  active_until?: string | null
+  mood_tag?: MabarVibe | null
+  note?: string | null
+  minutes_left: number
+}
+
+export interface MabarSignalPayload {
+  duration_minutes?: number
+  mood_tag?: MabarVibe | null
+  note?: string | null
+}
+
+export interface MabarMyStats {
+  hosted: number
+  joined: number
+  avg_stars?: number | null
+  rating_count: number
+  upcoming: MabarSessionDTO[]
+  badges: { key: string; label: string; tier: string; description: string }[]
+}
+
+// ----- Mabar Room (chat) -----
+export type MabarMessageKind = 'text' | 'system' | 'quick' | 'gif'
+
+export interface MabarReaction {
+  emoji: string
+  count: number
+  mine: boolean
+}
+
+export interface MabarMessageDTO {
+  id: number
+  kind: MabarMessageKind
+  body: string
+  is_pinned: boolean
+  reactions: MabarReaction[]
+  created_at: string
+  user: MabarUser | null
+  reply_to: {
+    id: number
+    body: string
+    user: { id: number; name: string } | null
+  } | null
+}
+
+export interface MabarRoomMember {
+  slot_id: number
+  slot_index: number
+  role_preference: string
+  status: string
+  last_seen_at: string | null
+  online: boolean
+  user: MabarUser | null
+}
+
+export interface MabarRoomSession {
+  id: number
+  title: string
+  type: MabarType
+  vibe: MabarVibe | null
+  rank_requirement: MabarRank
+  starts_at: string | null
+  ends_at: string | null
+  status: MabarStatus
+  voice_platform: MabarVoice | null
+  discord_link: string | null
+  room_id: string | null
+  notes: string | null
+  max_slots: number
+  filled_slots: number
+  host: MabarUser | null
+  is_viewer_host: boolean
+  members: MabarRoomMember[]
+}
+
+export interface MabarRoomResponse {
+  session: MabarRoomSession
+  pinned_message: MabarMessageDTO | null
+  messages: MabarMessageDTO[]
+  quick_templates: Record<string, string>
+  your_role: 'host' | 'confirmed' | 'pending' | 'left' | 'none'
+}
+
+export interface MabarMessagesPoll {
+  messages: MabarMessageDTO[]
+  members: {
+    user_id: number
+    name: string
+    username: string | null
+    avatar_url: string | null
+    status: string
+    role_preference: string
+    slot_index: number
+    last_seen_at: string | null
+    online: boolean
+  }[]
+  pinned_message_id: number | null
+  session_status: MabarStatus
 }
 
 export interface MatchCreatePayload {
@@ -308,10 +527,20 @@ export interface Pagination {
 export interface FilterOptions {
   role_id?: number
   hero_id?: number
+  patch_id?: number
   period?: string
   min_matches?: number
+  per_page?: number
   sort_by?: string
   sort_dir?: 'asc' | 'desc'
+}
+
+export interface SynergyEntry {
+  players: { id: number; username: string }[]
+  matches: number
+  wins: number
+  win_rate: number
+  avg_rating: number
 }
 
 export interface Patch {

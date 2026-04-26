@@ -9,6 +9,8 @@ const emit = defineEmits<{
 const props = defineProps<{
   showSort?: boolean
   sortOptions?: { value: string; label: string }[]
+  showPatch?: boolean
+  patchOptions?: { value: number; label: string }[]
 }>()
 
 const filters = ref<FilterOptions>({
@@ -44,6 +46,14 @@ function resetFilters() {
       <div class="form-group">
         <label class="form-label">Min Matches</label>
         <input v-model.number="filters.min_matches" type="number" class="form-input" placeholder="0" min="0" @change="applyFilters">
+      </div>
+
+      <div v-if="showPatch && patchOptions?.length" class="form-group">
+        <label class="form-label">Season / Split</label>
+        <select v-model.number="filters.patch_id" class="form-select" @change="applyFilters">
+          <option :value="undefined">All Seasons</option>
+          <option v-for="opt in patchOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
       </div>
 
       <div v-if="showSort && sortOptions" class="form-group">

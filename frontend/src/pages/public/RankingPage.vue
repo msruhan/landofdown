@@ -1,27 +1,30 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { rankingsApi } from '@/services/api'
+import { rankingsApi, patchesApi } from '@/services/api'
 import type { RankingEntry, Column, FilterOptions } from '@/types'
 import DataTable from '@/components/DataTable.vue'
 import FilterPanel from '@/components/FilterPanel.vue'
 import WinRateBar from '@/components/WinRateBar.vue'
 import KDADisplay from '@/components/KDADisplay.vue'
 import PlayerBadge from '@/components/PlayerBadge.vue'
-import HeroChip from '@/components/HeroChip.vue'
 import RoleBadge from '@/components/RoleBadge.vue'
+import { getAvatarUrl, handleAvatarError } from '@/utils/avatar'
 
 const rankings = ref<RankingEntry[]>([])
 const loading = ref(true)
 const sortBy = ref('wins')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const filters = ref<FilterOptions>({})
+const patchOptions = ref<{ value: number; label: string }[]>([])
 
 const columns: Column[] = [
   { key: 'rank', label: '#', width: '60px', align: 'center' },
   { key: 'username', label: 'Player' },
   { key: 'matches_played', label: 'Matches', sortable: true, align: 'center' },
   { key: 'win_rate', label: 'Win Rate', sortable: true, width: '160px' },
-  { key: 'mvp_count', label: 'MVPs', sortable: true, align: 'center' },
+  { key: 'form_meter', label: 'Form', sortable: false, align: 'center' },
+  { key: 'mvp_win_count', label: 'MVP Win', sortable: true, align: 'center' },
+  { key: 'mvp_lose_count', label: 'MVP Lose', sortable: true, align: 'center' },
   { key: 'avg_rating', label: 'Avg Rating', sortable: true, align: 'center' },
   { key: 'kda', label: 'KDA', align: 'center' },
   { key: 'top_hero', label: 'Top Hero' },
@@ -61,11 +64,33 @@ async function fetchRankings() {
       sort_by: sortBy.value,
       sort_dir: sortDir.value,
     })
-    rankings.value = response.data.data.map((r, i) => ({ ...r, rank: i + 1 }))
+    rankings.value = response.data.data.map((r, i) => {
+      const rank = i + 1
+      // Fallback: jika API belum kirim previous_rank, tetap render indikator (netral)
+      const previousRank = r.previous_rank ?? rank
+      return {
+        ...r,
+        rank,
+        previous_rank: previousRank,
+        rank_change: previousRank ? previousRank - rank : 0,
+      }
+    })
   } catch {
     rankings.value = []
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchPatchOptions() {
+  try {
+    const response = await patchesApi.list()
+    patchOptions.value = (response.data.data ?? []).map((p) => ({
+      value: p.id,
+      label: `${p.version}${p.name ? ` - ${p.name}` : ''}`,
+    }))
+  } catch {
+    patchOptions.value = []
   }
 }
 
@@ -114,7 +139,10 @@ function rankLabel(rank: number): string {
   return '5TH'
 }
 
-onMounted(fetchRankings)
+onMounted(async () => {
+  await fetchPatchOptions()
+  await fetchRankings()
+})
 </script>
 
 <template>
@@ -144,9 +172,10 @@ onMounted(fetchRankings)
           <div class="podium__player">
             <div class="podium__avatar-wrap" :class="`podium__avatar-wrap--rank-${player.rank}`">
               <img
-                :src="`https://api.dicebear.com/7.x/adventurer/svg?seed=${player.username}`"
+                :src="getAvatarUrl(player.username, player.avatar_url)"
                 :alt="player.username"
                 class="podium__avatar"
+                @error="(event) => handleAvatarError(event, player.username)"
               />
               <span class="podium__rank-badge" :class="`podium__rank-badge--rank-${player.rank}`">{{ player.rank }}</span>
             </div>
@@ -169,7 +198,13 @@ onMounted(fetchRankings)
     </section>
 
     <!-- ========== FILTERS ========== -->
-    <FilterPanel :show-sort="true" :sort-options="sortOptions" @filter="handleFilter" />
+    <FilterPanel
+      :show-sort="true"
+      :show-patch="true"
+      :patch-options="patchOptions"
+      :sort-options="sortOptions"
+      @filter="handleFilter"
+    />
 
     <!-- ========== TABLE ========== -->
     <DataTable
@@ -190,15 +225,61 @@ onMounted(fetchRankings)
       </template>
 
       <template #cell-username="{ row }">
-        <PlayerBadge :username="(row as unknown as RankingEntry).username" :player-id="(row as unknown as RankingEntry).player_id" :linkable="true" />
+        <div class="player-with-trend">
+          <PlayerBadge
+            :username="(row as unknown as RankingEntry).username"
+            :avatar-url="(row as unknown as RankingEntry).avatar_url"
+            :player-id="(row as unknown as RankingEntry).player_id"
+            :linkable="true"
+          />
+          <span
+            v-if="((row as unknown as RankingEntry).rank_change ?? 0) > 0"
+            class="rank-trend rank-trend--up"
+            :title="`Naik ${((row as unknown as RankingEntry).rank_change ?? 0)} peringkat dari match sebelumnya`"
+          >
+            ▲ {{ (row as unknown as RankingEntry).rank_change }}
+          </span>
+          <span
+            v-else-if="((row as unknown as RankingEntry).rank_change ?? 0) < 0"
+            class="rank-trend rank-trend--down"
+            :title="`Turun ${Math.abs((row as unknown as RankingEntry).rank_change ?? 0)} peringkat dari match sebelumnya`"
+          >
+            ▼ {{ Math.abs((row as unknown as RankingEntry).rank_change ?? 0) }}
+          </span>
+          <span
+            v-else
+            class="rank-trend rank-trend--same"
+            title="Peringkat sama seperti match sebelumnya"
+          >
+            • 0
+          </span>
+        </div>
       </template>
 
       <template #cell-win_rate="{ row }">
         <WinRateBar :win-rate="(row as unknown as RankingEntry).win_rate" :wins="(row as unknown as RankingEntry).wins" :losses="(row as unknown as RankingEntry).losses" />
       </template>
 
-      <template #cell-mvp_count="{ value }">
-        <span v-if="(value as number) > 0" class="badge badge-gold">🏆 {{ value }}</span>
+      <template #cell-form_meter="{ row }">
+        <span
+          class="badge"
+          :style="(row as unknown as RankingEntry).form_meter === 'hot'
+            ? 'background: rgba(0,255,135,.15); color:#00ff87; border-color: rgba(0,255,135,.35);'
+            : (row as unknown as RankingEntry).form_meter === 'warm'
+              ? 'background: rgba(245,158,11,.15); color:#f59e0b; border-color: rgba(245,158,11,.35);'
+              : 'background: rgba(239,68,68,.15); color:#f87171; border-color: rgba(239,68,68,.35);'"
+        >
+          {{ ((row as unknown as RankingEntry).form_meter ?? 'cold').toUpperCase() }}
+        </span>
+      </template>
+
+      <template #cell-mvp_win_count="{ value }">
+        <span v-if="(value as number) > 0" class="badge badge-gold">🏆W {{ value }}</span>
+        <span v-else class="text-muted">0</span>
+      </template>
+
+      <template #cell-mvp_lose_count="{ value }">
+        <span v-if="(value as number) > 0" class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.35);">🏆L {{ value }}</span>
         <span v-else class="text-muted">0</span>
       </template>
 
@@ -207,11 +288,22 @@ onMounted(fetchRankings)
       </template>
 
       <template #cell-kda="{ row }">
-        <KDADisplay :kills="Math.round((row as unknown as RankingEntry).avg_kda.kills)" :deaths="Math.round((row as unknown as RankingEntry).avg_kda.deaths)" :assists="Math.round((row as unknown as RankingEntry).avg_kda.assists)" size="sm" />
+        <KDADisplay
+          :kills="(row as unknown as RankingEntry).total_kda.kills"
+          :deaths="(row as unknown as RankingEntry).total_kda.deaths"
+          :assists="(row as unknown as RankingEntry).total_kda.assists"
+          size="sm"
+        />
       </template>
 
-      <template #cell-top_hero="{ value }">
-        <HeroChip v-if="value" :name="value as string" />
+      <template #cell-top_hero="{ row }">
+        <img
+          v-if="(row as unknown as RankingEntry).top_hero_icon"
+          :src="(row as unknown as RankingEntry).top_hero_icon!"
+          :alt="(row as unknown as RankingEntry).top_hero || 'Hero'"
+          class="top-hero-image"
+          loading="lazy"
+        />
         <span v-else class="text-muted">-</span>
       </template>
 
@@ -473,6 +565,51 @@ onMounted(fetchRankings)
   font-family: 'Teko', var(--font-heading);
   font-size: 1.2rem;
   font-weight: 700;
+}
+
+.player-with-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rank-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-family: 'Teko', var(--font-heading);
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  border: 1px solid transparent;
+}
+
+.rank-trend--up {
+  color: #00ff87;
+  background: rgba(0, 255, 135, 0.12);
+  border-color: rgba(0, 255, 135, 0.35);
+}
+
+.rank-trend--down {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.35);
+}
+
+.rank-trend--same {
+  color: #9ca3af;
+  background: rgba(156, 163, 175, 0.12);
+  border-color: rgba(156, 163, 175, 0.3);
+}
+
+.top-hero-image {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(0, 255, 135, 0.3);
+  box-shadow: 0 0 10px rgba(0, 255, 135, 0.18);
 }
 
 @keyframes fade-in {

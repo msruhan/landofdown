@@ -1,6 +1,15 @@
 import axios from 'axios'
 import type {
   AuthUser,
+  MabarMyStats,
+  MabarMessageDTO,
+  MabarMessagesPoll,
+  MabarRoomResponse,
+  MabarSessionDTO,
+  MabarSessionPayload,
+  MabarSignalDTO,
+  MabarSignalPayload,
+  RegisterPayload,
   DashboardStats,
   DraftOverview,
   DraftRecommendation,
@@ -27,6 +36,7 @@ import type {
   RoleStats,
   TeamComparison,
   TrendPoint,
+  SynergyEntry,
   BattleAiRequest,
   BattleAiResponse,
 } from '@/types'
@@ -54,8 +64,9 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('auth_token')
-      if (window.location.pathname.startsWith('/admin') && window.location.pathname !== '/admin/login') {
-        window.location.href = '/admin/login'
+      const path = window.location.pathname
+      if ((path.startsWith('/admin') && path !== '/admin/login') || path.startsWith('/mabar')) {
+        window.location.href = '/login?redirect=' + encodeURIComponent(path + window.location.search)
       }
     }
     return Promise.reject(error)
@@ -64,9 +75,51 @@ api.interceptors.response.use(
 
 // Auth
 export const authApi = {
-  login: (credentials: LoginCredentials) => api.post<{ token: string; user: AuthUser }>('/admin/login', credentials),
-  logout: () => api.post('/admin/logout'),
-  me: () => api.get<AuthUser>('/admin/me'),
+  login: (credentials: LoginCredentials) => api.post<{ token: string; user: AuthUser }>('/auth/login', credentials),
+  register: (payload: RegisterPayload) => api.post<{ token: string; user: AuthUser }>('/auth/register', payload),
+  logout: () => api.post('/auth/logout'),
+  me: () => api.get<AuthUser>('/auth/me'),
+}
+
+// Mabar Lounge
+export const mabarApi = {
+  listSessions: (params?: Record<string, unknown>) =>
+    api.get<{ data: MabarSessionDTO[] }>('/mabar/sessions', { params }),
+  getSession: (id: number) => api.get<MabarSessionDTO>(`/mabar/sessions/${id}`),
+  createSession: (payload: MabarSessionPayload) => api.post<MabarSessionDTO>('/mabar/sessions', payload),
+  updateSession: (id: number, payload: Partial<MabarSessionPayload>) =>
+    api.patch<MabarSessionDTO>(`/mabar/sessions/${id}`, payload),
+  deleteSession: (id: number) => api.delete(`/mabar/sessions/${id}`),
+  joinSession: (id: number, data?: { slot_id?: number; role_preference?: string }) =>
+    api.post<{ message: string; slot_id: number }>(`/mabar/sessions/${id}/join`, data ?? {}),
+  leaveSession: (id: number) => api.post(`/mabar/sessions/${id}/leave`),
+  approveSlot: (id: number, slotId: number) =>
+    api.post(`/mabar/sessions/${id}/slots/${slotId}/approve`),
+  kickSlot: (id: number, slotId: number) =>
+    api.post(`/mabar/sessions/${id}/slots/${slotId}/kick`),
+  transition: (id: number, status: string) =>
+    api.post(`/mabar/sessions/${id}/transition`, { status }),
+  toggleFeature: (id: number) => api.post<{ is_featured: boolean }>(`/mabar/sessions/${id}/feature`),
+  rate: (id: number, data: { to_user_id: number; stars: number; tags?: string[]; comment?: string }) =>
+    api.post(`/mabar/sessions/${id}/rate`, data),
+  listReadyNow: () => api.get<{ data: MabarSignalDTO[] }>('/mabar/ready-now'),
+  setReadyNow: (payload: MabarSignalPayload) => api.post<MabarSignalDTO>('/mabar/ready-now', payload),
+  clearReadyNow: () => api.delete('/mabar/ready-now'),
+  myStats: () => api.get<MabarMyStats>('/mabar/me'),
+
+  // ---- Private Room (chat) ----
+  room: (id: number) => api.get<MabarRoomResponse>(`/mabar/sessions/${id}/room`),
+  listMessages: (id: number, since?: number) =>
+    api.get<MabarMessagesPoll>(`/mabar/sessions/${id}/messages`, { params: since ? { since } : {} }),
+  sendMessage: (id: number, body: string, opts?: { reply_to_id?: number; kind?: 'text' | 'quick' | 'gif' }) =>
+    api.post<MabarMessageDTO>(`/mabar/sessions/${id}/messages`, { body, ...(opts ?? {}) }),
+  reactMessage: (id: number, msgId: number, emoji: string) =>
+    api.post<MabarMessageDTO>(`/mabar/sessions/${id}/messages/${msgId}/react`, { emoji }),
+  togglePinMessage: (id: number, msgId: number) =>
+    api.post<{ pinned: boolean }>(`/mabar/sessions/${id}/messages/${msgId}/pin`),
+  deleteMessage: (id: number, msgId: number) =>
+    api.delete(`/mabar/sessions/${id}/messages/${msgId}`),
+  heartbeat: (id: number) => api.post(`/mabar/sessions/${id}/heartbeat`),
 }
 
 // Players
@@ -106,11 +159,12 @@ export const matchesApi = {
 
 // Statistics
 export const statisticsApi = {
-  getDashboard: () => api.get<DashboardStats>('/statistics/dashboard'),
-  getPlayerStats: (playerId: number) => api.get<PlayerStats>(`/statistics/players/${playerId}`),
+  getDashboard: (params?: Record<string, unknown>) => api.get<DashboardStats>('/statistics/dashboard', { params }),
+  getPlayerStats: (playerId: number, params?: Record<string, unknown>) => api.get<PlayerStats>(`/statistics/players/${playerId}`, { params }),
   getHeroStats: (params?: Record<string, unknown>) => api.get<HeroStats[]>('/statistics/heroes', { params }),
   getRoleStats: (params?: Record<string, unknown>) => api.get<RoleStats[]>('/statistics/roles', { params }),
   getTrends: (params?: Record<string, unknown>) => api.get<TrendPoint[]>('/statistics/trends', { params }),
+  getSynergy: (params?: Record<string, unknown>) => api.get<{ top_duos: SynergyEntry[]; top_trios: SynergyEntry[] }>('/statistics/synergy', { params }),
 }
 
 // Rankings

@@ -20,6 +20,7 @@ ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategorySca
 
 const props = defineProps<{
   playerId: number
+  patchId?: number
 }>()
 
 const stats = ref<PlayerStats | null>(null)
@@ -31,7 +32,7 @@ async function loadPlayerStats(id: number) {
   error.value = null
 
   try {
-    const res = await statisticsApi.getPlayerStats(id)
+    const res = await statisticsApi.getPlayerStats(id, props.patchId ? { patch_id: props.patchId } : {})
     stats.value = res.data
   } catch {
     stats.value = null
@@ -42,8 +43,8 @@ async function loadPlayerStats(id: number) {
 }
 
 watch(
-  () => props.playerId,
-  (id) => {
+  () => [props.playerId, props.patchId],
+  ([id]) => {
     if (!id || Number.isNaN(id)) {
       stats.value = null
       loading.value = false
@@ -95,20 +96,64 @@ const donutOpts = {
   plugins: { legend: { display: false }, tooltip: { enabled: false } },
 }
 
+const trendSeries = computed(() => {
+  const raw = stats.value?.recent_performance
+  if (!raw?.length) return []
+  // Backend returns newest-first; reverse so chart reads oldest → newest (left → right).
+  return [...raw].reverse().slice(-10)
+})
+
+const trendPeak = computed(() => {
+  const s = trendSeries.value
+  if (!s.length) return 0
+  return Math.max(...s.map(t => Number(t.rating) || 0))
+})
+const trendAvg = computed(() => {
+  const s = trendSeries.value
+  if (!s.length) return 0
+  return s.reduce((acc, t) => acc + (Number(t.rating) || 0), 0) / s.length
+})
+const trendLast = computed(() => {
+  const s = trendSeries.value
+  return s.length ? Number(s[s.length - 1].rating) || 0 : 0
+})
+const trendLastResult = computed(() => {
+  const s = trendSeries.value
+  return s.length ? s[s.length - 1].result : null
+})
+const trendWins = computed(() => trendSeries.value.filter(t => t.result === 'win').length)
+
 function trendData() {
-  if (!stats.value?.recent_performance?.length) return null
-  const perf = stats.value.recent_performance.slice(-10)
+  const perf = trendSeries.value
+  if (!perf.length) return null
   return {
     labels: perf.map(t => t.match_date.slice(5)),
     datasets: [{
+      label: 'Rating',
       data: perf.map(t => t.rating),
       borderColor: '#00ff87',
-      backgroundColor: 'rgba(0,255,135,0.08)',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      backgroundColor: (ctx: any) => {
+        const chart = ctx.chart
+        const area = chart?.chartArea
+        if (!area) return 'rgba(0,255,135,0.18)'
+        const g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom)
+        g.addColorStop(0, 'rgba(0,255,135,0.42)')
+        g.addColorStop(0.55, 'rgba(0,255,135,0.12)')
+        g.addColorStop(1, 'rgba(0,255,135,0)')
+        return g
+      },
       fill: true,
-      tension: 0.4,
-      pointRadius: 4,
+      tension: 0.42,
+      pointRadius: 6,
+      pointHoverRadius: 9,
       pointBackgroundColor: perf.map(t => t.result === 'win' ? '#00ff87' : '#ef4444'),
-      borderWidth: 2,
+      pointBorderColor: '#0a0a0a',
+      pointBorderWidth: 2,
+      pointHoverBorderWidth: 3,
+      borderWidth: 3,
+      borderCapStyle: 'round' as const,
+      borderJoinStyle: 'round' as const,
     }],
   }
 }
@@ -116,16 +161,121 @@ function trendData() {
 const trendOpts = {
   responsive: true,
   maintainAspectRatio: false,
-  plugins: { legend: { display: false }, tooltip: { backgroundColor: '#111a15', titleColor: '#e4e4e7', bodyColor: '#a1a1aa', borderColor: '#1e3a2a', borderWidth: 1, padding: 8, cornerRadius: 8 } },
-  scales: {
-    x: { ticks: { color: '#52525b', font: { family: 'Rajdhani', size: 11 } }, grid: { display: false } },
-    y: { ticks: { color: '#52525b', font: { family: 'Rajdhani', size: 11 } }, grid: { color: 'rgba(30,58,42,0.2)' } },
+  interaction: { mode: 'index' as const, intersect: false },
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: 'rgba(10,15,12,0.95)',
+      titleColor: '#e4e4e7',
+      bodyColor: '#a1a1aa',
+      borderColor: 'rgba(0,255,135,0.3)',
+      borderWidth: 1,
+      padding: 12,
+      cornerRadius: 10,
+      displayColors: false,
+      titleFont: { family: 'Rajdhani', size: 12, weight: 700 as const },
+      bodyFont: { family: 'Rajdhani', size: 13 },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      callbacks: {
+        label: (ctx: any) => `Rating ${Number(ctx.parsed.y).toFixed(1)}`,
+        afterLabel: (ctx: any) => {
+          const row = trendSeries.value[ctx.dataIndex]
+          if (!row) return ''
+          return `${row.result?.toUpperCase() || ''}  ·  ${row.hero?.name || '-'}`
+        },
+      },
+    },
   },
+  scales: {
+    x: {
+      ticks: { color: '#71717a', font: { family: 'Rajdhani', size: 12, weight: 600 as const } },
+      grid: { display: false },
+      border: { display: false },
+    },
+    y: {
+      ticks: { color: '#71717a', font: { family: 'Rajdhani', size: 12 }, padding: 8 },
+      grid: { color: 'rgba(0,255,135,0.06)', drawTicks: false },
+      border: { display: false },
+    },
+  },
+  layout: { padding: { top: 18, right: 12, bottom: 4, left: 4 } },
 }
 
 const roleColors: Record<string, string> = {
   gold: '#ffd700', mid: '#06b6d4', exp: '#f59e0b', jungle: '#ef4444', roam: '#10b981',
 }
+
+function heroPlaceholder(name?: string | null) {
+  const label = (name || '?').trim().slice(0, 1).toUpperCase() || '?'
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#0f3325"/>
+          <stop offset="100%" stop-color="#00a76f"/>
+        </linearGradient>
+      </defs>
+      <rect width="80" height="80" rx="16" fill="url(#g)"/>
+      <text x="40" y="50" text-anchor="middle" font-family="Rajdhani, Arial" font-size="34" font-weight="700" fill="#d9ffee">${label}</text>
+    </svg>`
+  )}`
+}
+
+function onHeroImageError(event: Event, heroName?: string | null) {
+  const el = event.target as HTMLImageElement | null
+  if (!el) return
+  const fallback = heroPlaceholder(heroName)
+  if (el.src !== fallback) el.src = fallback
+}
+
+const achievementBadgeImages = {
+  epicRound: new URL('../assets/styles/badge/badge (1).png', import.meta.url).href,
+  legendaryRound: new URL('../assets/styles/badge/badge.png', import.meta.url).href,
+  flagRed: new URL('../assets/styles/badge/flag (1).png', import.meta.url).href,
+  flagBlue: new URL('../assets/styles/badge/flag (2).png', import.meta.url).href,
+  flagPurple: new URL('../assets/styles/badge/flag (3).png', import.meta.url).href,
+  flagGreen: new URL('../assets/styles/badge/flag.png', import.meta.url).href,
+  levelBadge: new URL('../assets/styles/badge/level-badge.png', import.meta.url).href,
+} as const
+
+const achievementImagePool = [
+  achievementBadgeImages.legendaryRound,
+  achievementBadgeImages.epicRound,
+  achievementBadgeImages.levelBadge,
+  achievementBadgeImages.flagPurple,
+  achievementBadgeImages.flagBlue,
+  achievementBadgeImages.flagGreen,
+  achievementBadgeImages.flagRed,
+] as const
+
+const achievementVisuals = computed(() => {
+  const list = stats.value?.achievements ?? []
+  const used = new Set<string>()
+
+  return list.map((badge, index) => {
+    const preferredPool =
+      badge.tier === 'legendary'
+        ? [achievementBadgeImages.legendaryRound, achievementBadgeImages.levelBadge]
+        : badge.tier === 'epic'
+          ? [achievementBadgeImages.flagPurple, achievementBadgeImages.flagBlue, achievementBadgeImages.epicRound]
+          : badge.tier === 'rare'
+            ? [achievementBadgeImages.levelBadge, achievementBadgeImages.flagGreen, achievementBadgeImages.flagRed]
+            : [achievementBadgeImages.epicRound, achievementBadgeImages.flagGreen]
+
+    let src = preferredPool.find((candidate) => !used.has(candidate))
+    if (!src) {
+      // When preferred pool is exhausted, pick any unused icon globally.
+      src = achievementImagePool.find((candidate) => !used.has(candidate))
+    }
+    if (!src) {
+      // If unlocked badges exceed available images, continue cycling.
+      src = achievementImagePool[index % achievementImagePool.length]
+    }
+
+    used.add(src)
+    return { badge, src }
+  })
+})
 </script>
 
 <template>
@@ -152,6 +302,13 @@ const roleColors: Record<string, string> = {
             <div class="profile-card__info">
               <h1 class="profile-card__name">{{ stats.player.username }}</h1>
               <div class="profile-card__tags">
+                <span
+                  v-if="stats.form_meter"
+                  class="streak-tag"
+                  :class="stats.form_meter === 'hot' ? 'win' : stats.form_meter === 'warm' ? 'warm' : 'lose'"
+                >
+                  {{ stats.form_meter.toUpperCase() }} FORM
+                </span>
                 <span v-if="stats.current_streak.type" class="streak-tag" :class="stats.current_streak.type">
                   {{ stats.current_streak.type === 'win' ? '🔥' : '❄️' }}
                   {{ stats.current_streak.count }} {{ stats.current_streak.type }} streak
@@ -235,6 +392,32 @@ const roleColors: Record<string, string> = {
               <span class="panel__icon">🏅</span>
               Medals
             </h3>
+            <div v-if="stats.recommended_role" class="recommend-role">
+              Best role: <strong>{{ stats.recommended_role.role.name }}</strong> · {{ stats.recommended_role.win_rate.toFixed(1) }}% WR ({{ stats.recommended_role.times_played }} match)
+            </div>
+            <div v-if="stats.achievements?.length" class="achievement-panel">
+              <div class="achievement-panel__head">
+                <span class="achievement-panel__title">Achievements</span>
+                <span class="achievement-panel__count">{{ stats.achievements.length }} unlocked</span>
+              </div>
+              <div class="achievement-row">
+                <div
+                  v-for="item in achievementVisuals"
+                  :key="item.badge.key"
+                  class="achievement-badge"
+                  :title="item.badge.description ? `${item.badge.label} — ${item.badge.description}` : item.badge.label"
+                >
+                  <img
+                    :src="item.src"
+                    :alt="item.badge.label"
+                    class="achievement-badge__art"
+                    loading="lazy"
+                  />
+                  <span class="achievement-badge__label">{{ item.badge.label }}</span>
+                  <span v-if="item.badge.description" class="achievement-badge__desc">{{ item.badge.description }}</span>
+                </div>
+              </div>
+            </div>
             <div class="medals-grid">
               <div class="medal-box medal-box--mvp">
                 <span class="medal-box__icon">🏆</span>
@@ -309,15 +492,6 @@ const roleColors: Record<string, string> = {
             </div>
           </div>
 
-          <div class="panel" v-if="trendData()">
-            <h3 class="panel__title">
-              <span class="panel__icon">📈</span>
-              Performance Trend
-            </h3>
-            <div class="trend-chart">
-              <Line :data="trendData()!" :options="trendOpts" />
-            </div>
-          </div>
         </div>
 
         <div class="player-two-col__right">
@@ -337,7 +511,14 @@ const roleColors: Record<string, string> = {
                 <div class="match-row__indicator" :class="m.result"></div>
                 <div class="match-row__left">
                   <div class="match-row__hero-line">
-                    <span class="match-row__hero-name">{{ m.hero }}</span>
+                    <img
+                      class="match-row__hero-avatar"
+                      :src="m.hero?.icon_url || heroPlaceholder(m.hero?.name)"
+                      :alt="m.hero?.name || 'Hero'"
+                      loading="lazy"
+                      @error="onHeroImageError($event, m.hero?.name)"
+                    />
+                    <span class="match-row__hero-name">{{ m.hero?.name || '-' }}</span>
                     <span class="match-row__role">{{ m.role }}</span>
                   </div>
                   <div class="match-row__stats-line">
@@ -360,6 +541,51 @@ const roleColors: Record<string, string> = {
             </div>
             <div v-else class="text-muted text-center" style="padding: 32px;">No recent matches</div>
           </div>
+        </div>
+      </div>
+
+      <div v-if="trendData()" class="panel panel--trend">
+        <div class="trend-header">
+          <div class="trend-header__title-wrap">
+            <span class="trend-header__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M4 17l5-5 4 4 7-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 8h6v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <div>
+              <h3 class="trend-header__title">Performance Trend</h3>
+              <span class="trend-header__sub">Last {{ trendSeries.length }} matches · chronological</span>
+            </div>
+          </div>
+          <div class="trend-stats">
+            <div class="trend-stat">
+              <span class="trend-stat__label">Peak</span>
+              <span class="trend-stat__value trend-stat__value--green">{{ trendPeak.toFixed(1) }}</span>
+            </div>
+            <div class="trend-stat">
+              <span class="trend-stat__label">Average</span>
+              <span class="trend-stat__value">{{ trendAvg.toFixed(1) }}</span>
+            </div>
+            <div class="trend-stat">
+              <span class="trend-stat__label">Latest</span>
+              <span
+                class="trend-stat__value"
+                :class="trendLastResult === 'win' ? 'trend-stat__value--green' : 'trend-stat__value--red'"
+              >{{ trendLast.toFixed(1) }}</span>
+            </div>
+            <div class="trend-stat">
+              <span class="trend-stat__label">Wins</span>
+              <span class="trend-stat__value">{{ trendWins }}<span class="trend-stat__suffix">/{{ trendSeries.length }}</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="trend-chart">
+          <Line :data="trendData()!" :options="trendOpts" />
+        </div>
+        <div class="trend-legend">
+          <span class="trend-legend__item"><span class="trend-legend__dot trend-legend__dot--win"></span> Win match</span>
+          <span class="trend-legend__item"><span class="trend-legend__dot trend-legend__dot--lose"></span> Lose match</span>
         </div>
       </div>
     </template>
@@ -407,6 +633,17 @@ const roleColors: Record<string, string> = {
 .panel__title { font-family: var(--font-heading); font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
 .panel__icon { font-size: 1rem; }
 .medals-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.recommend-role { margin-bottom: 10px; font-size: 0.8rem; color: var(--text-secondary); }
+.achievement-panel { margin-bottom: 14px; }
+.achievement-panel__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.achievement-panel__title { font-family: var(--font-heading); font-size: .72rem; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-muted); }
+.achievement-panel__count { font-size: .65rem; font-family: var(--font-heading); letter-spacing: .5px; color: #9cf9ce; background: rgba(0,255,135,.08); padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(0,255,135,.2); text-transform: uppercase; }
+.achievement-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px 8px; margin-bottom: 12px; }
+.achievement-badge { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 4px 2px; transition: transform .22s ease, filter .22s ease; }
+.achievement-badge:hover { transform: translateY(-3px) scale(1.04); filter: brightness(1.08); }
+.achievement-badge__art { width: 64px; height: 64px; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(0,0,0,.38)); }
+.achievement-badge__label { font-family: var(--font-heading); font-size: .64rem; text-transform: uppercase; letter-spacing: .4px; color: var(--text-white); line-height: 1.1; }
+.achievement-badge__desc { font-size: .56rem; color: var(--text-muted); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .medal-box { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 8px; border-radius: var(--radius-md); background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); transition: all 0.3s ease; }
 .medal-box:hover { background: rgba(255,255,255,0.04); }
 .medal-box__icon { font-size: 1.3rem; }
@@ -428,7 +665,127 @@ const roleColors: Record<string, string> = {
 .hero-row__stat { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .hero-row__stat-label { font-size: 0.6rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; }
 .hero-row__stat-value { font-family: var(--font-heading); font-size: 0.85rem; font-weight: 700; color: var(--text-white); }
-.trend-chart { height: 200px; }
+.panel--trend {
+  position: relative;
+  margin-top: 20px;
+  padding: 28px 28px 22px;
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(0,255,135,0.06) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(0,255,135,0.03), rgba(0,0,0,0)) ,
+    var(--bg-card);
+  border: 1px solid rgba(0,255,135,0.12);
+  overflow: hidden;
+}
+.panel--trend::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, #00ff87 50%, transparent);
+  opacity: .55;
+}
+.trend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.trend-header__title-wrap { display: flex; align-items: center; gap: 12px; }
+.trend-header__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  background: rgba(0,255,135,0.1);
+  border: 1px solid rgba(0,255,135,0.25);
+  color: var(--green-neon);
+  box-shadow: 0 0 20px rgba(0,255,135,0.15);
+}
+.trend-header__icon svg { width: 22px; height: 22px; }
+.trend-header__title {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-white);
+  text-transform: uppercase;
+  line-height: 1.1;
+}
+.trend-header__sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-family: var(--font-heading);
+}
+.trend-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.trend-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 76px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: var(--radius-md);
+}
+.trend-stat__label {
+  font-family: var(--font-heading);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.trend-stat__value {
+  font-family: var(--font-heading);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-white);
+  line-height: 1.1;
+}
+.trend-stat__suffix {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+.trend-stat__value--green { color: var(--green-neon); }
+.trend-stat__value--red { color: var(--danger); }
+
+.trend-chart {
+  height: 340px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(0,255,135,0.02), transparent 60%);
+}
+.trend-legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 12px;
+  font-family: var(--font-heading);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+.trend-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.trend-legend__dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid #0a0a0a;
+}
+.trend-legend__dot--win { background: var(--green-neon); box-shadow: 0 0 8px rgba(0,255,135,0.5); }
+.trend-legend__dot--lose { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.45); }
+@media (max-width: 600px) {
+  .trend-chart { height: 260px; }
+  .panel--trend { padding: 20px 16px 16px; }
+  .trend-stat { min-width: 64px; padding: 8px 10px; }
+  .trend-stat__value { font-size: 1.1rem; }
+}
 .match-list { display: flex; flex-direction: column; gap: 8px; }
 .match-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-md); background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.03); transition: all 0.3s ease; animation: slide-up 0.4s ease both; }
 .match-row:hover { background: rgba(255,255,255,0.035); border-color: rgba(255,255,255,0.08); }
@@ -436,7 +793,16 @@ const roleColors: Record<string, string> = {
 .match-row__indicator.win { background: var(--green-neon); box-shadow: 0 0 8px rgba(0,255,135,0.3); }
 .match-row__indicator.lose { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.3); }
 .match-row__left { flex: 1; min-width: 0; }
-.match-row__hero-line { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
+.match-row__hero-line { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.match-row__hero-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 0 0 1px rgba(0,255,135,0.1);
+  flex-shrink: 0;
+}
 .match-row__hero-name { font-family: var(--font-heading); font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
 .match-row__role { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .match-row__stats-line { display: flex; align-items: center; gap: 12px; }

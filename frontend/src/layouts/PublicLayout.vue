@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
 const mobileMenuOpen = ref(false)
+const userMenuOpen = ref(false)
 
-const navLinks = [
+const baseNavLinks = [
   {
     to: '/',
     label: 'Dashboard',
@@ -27,31 +31,43 @@ const navLinks = [
     icon: 'M14.5 17.5L3 6V3h3l11.5 11.5 M13 19l6-6 M16 16l4 4 M19 21l2-2 M14.5 6.5l1-1l3 3l-1 1',
   },
   {
-    to: '/drafts',
-    label: 'Drafts',
-    icon: 'M4 6h16 M4 10h10 M4 14h16 M4 18h8',
-  },
-  {
-    to: '/meta',
-    label: 'Meta',
-    icon: 'M3 12h4l3-9 4 18 3-9h4',
-  },
-  {
     to: '/head-to-head',
     label: 'H2H',
     icon: 'M12 3v18 M5 8l7-5 7 5 M5 16l7 5 7-5',
   },
 ]
 
+const mabarLink = {
+  to: '/mabar',
+  label: 'Mabar',
+  // joystick / gamepad style icon
+  icon: 'M6 12h4 M8 10v4 M15 12h.01 M17 14h.01 M7 16h10a5 5 0 0 0 5-5a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5a5 5 0 0 0 5 5z',
+  pulse: true,
+}
+
+const navLinks = computed(() => auth.isAuthenticated ? [...baseNavLinks, mabarLink] : baseNavLinks)
+
 function isActive(to: string) {
   if (to === '/') return route.path === '/'
   return route.path.startsWith(to)
 }
+
+async function handleLogout() {
+  userMenuOpen.value = false
+  await auth.logout()
+  router.push('/')
+}
+
+onMounted(() => {
+  if (auth.isAuthenticated && !auth.user) {
+    auth.fetchUser()
+  }
+})
 </script>
 
 <template>
-  <div class="public-layout bg-grid-pattern">
-    <header class="navbar">
+  <div class="public-layout bg-grid-pattern" :class="{ 'public-layout--immersive': route.meta.hideChrome }">
+    <header v-if="!route.meta.hideChrome" class="navbar">
       <div class="navbar__inner">
         <router-link to="/" class="navbar__logo">
           <span class="navbar__logo-icon" aria-hidden="true">
@@ -68,7 +84,7 @@ function isActive(to: string) {
             :key="link.to"
             :to="link.to"
             class="navbar__link"
-            :class="{ active: isActive(link.to) }"
+            :class="{ active: isActive(link.to), 'navbar__link--mabar': link.to === '/mabar' }"
             @click="mobileMenuOpen = false"
           >
             <span class="navbar__link-icon" aria-hidden="true">
@@ -77,10 +93,36 @@ function isActive(to: string) {
               </svg>
             </span>
             {{ link.label }}
+            <span v-if="link.to === '/mabar'" class="navbar__link-dot" aria-hidden="true"></span>
           </router-link>
-          <router-link to="/admin/login" class="navbar__link navbar__link--admin" @click="mobileMenuOpen = false">
-            Admin
-          </router-link>
+
+          <template v-if="!auth.isAuthenticated">
+            <router-link to="/login" class="navbar__link navbar__link--auth" @click="mobileMenuOpen = false">
+              Login
+            </router-link>
+            <router-link to="/register" class="navbar__link navbar__link--signup" @click="mobileMenuOpen = false">
+              Join Squad
+            </router-link>
+          </template>
+
+          <div v-else class="navbar__user" @click.stop>
+            <button class="navbar__user-btn" @click="userMenuOpen = !userMenuOpen">
+              <span class="navbar__user-avatar">
+                <img v-if="auth.userAvatar" :src="auth.userAvatar" :alt="auth.userName" />
+                <span v-else>{{ auth.userName.charAt(0).toUpperCase() }}</span>
+              </span>
+              <span class="navbar__user-name">{{ auth.userName }}</span>
+              <span v-if="auth.isAdmin" class="navbar__user-badge">ADMIN</span>
+              <svg class="navbar__user-caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <div v-if="userMenuOpen" class="navbar__user-menu" @click="userMenuOpen = false">
+              <router-link to="/mabar" class="navbar__user-item">My Mabar</router-link>
+              <router-link v-if="auth.isAdmin" to="/admin/dashboard" class="navbar__user-item">Admin Panel</router-link>
+              <button class="navbar__user-item navbar__user-item--danger" @click="handleLogout">Logout</button>
+            </div>
+          </div>
         </nav>
 
         <button class="navbar__hamburger" @click="mobileMenuOpen = !mobileMenuOpen" :aria-label="mobileMenuOpen ? 'Close menu' : 'Open menu'">
@@ -98,7 +140,7 @@ function isActive(to: string) {
       </router-view>
     </main>
 
-    <footer class="footer">
+    <footer v-if="!route.meta.hideChrome" class="footer">
       <div class="footer__glow-line"></div>
       <div class="footer__inner">
         <div class="footer__brand">
@@ -110,8 +152,6 @@ function isActive(to: string) {
           <router-link to="/ranking" class="footer__link animated-underline">Ranking</router-link>
           <router-link to="/statistics" class="footer__link animated-underline">Statistics</router-link>
           <router-link to="/battle" class="footer__link animated-underline">Battle</router-link>
-          <router-link to="/drafts" class="footer__link animated-underline">Drafts</router-link>
-          <router-link to="/meta" class="footer__link animated-underline">Meta</router-link>
           <router-link to="/head-to-head" class="footer__link animated-underline">H2H</router-link>
         </div>
         <div class="footer__bottom">
@@ -265,15 +305,156 @@ function isActive(to: string) {
   box-shadow: 0 0 8px rgba(0, 255, 135, 0.5);
 }
 
-.navbar__link--admin {
+.navbar__link--auth {
   margin-left: 12px;
   border: 1px solid var(--border-color);
   font-size: 0.95rem;
 }
 
-.navbar__link--admin:hover {
+.navbar__link--auth:hover {
   border-color: var(--green-neon);
   box-shadow: 0 0 10px rgba(0, 255, 135, 0.15);
+}
+
+.navbar__link--signup {
+  margin-left: 4px;
+  background: linear-gradient(135deg, rgba(0, 255, 135, 0.14), rgba(0, 255, 180, 0.04));
+  border: 1px solid rgba(0, 255, 135, 0.55);
+  color: var(--green-neon);
+  font-size: 0.95rem;
+}
+
+.navbar__link--signup:hover {
+  background: linear-gradient(135deg, rgba(0, 255, 135, 0.2), rgba(0, 255, 180, 0.1));
+  box-shadow: 0 0 16px rgba(0, 255, 135, 0.3);
+  color: #b8ffd7;
+}
+
+.navbar__link--mabar {
+  position: relative;
+}
+
+.navbar__link-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff3d7f;
+  box-shadow: 0 0 10px rgba(255, 61, 127, 0.9);
+  margin-left: 4px;
+  animation: pulse-scale 1.4s ease-in-out infinite;
+}
+
+.navbar__user {
+  position: relative;
+  margin-left: 12px;
+}
+
+.navbar__user-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-white);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.navbar__user-btn:hover {
+  border-color: var(--green-neon);
+  box-shadow: 0 0 12px rgba(0, 255, 135, 0.2);
+}
+
+.navbar__user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #00ff87, #0077ff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  font-weight: 800;
+  font-size: 0.8rem;
+  overflow: hidden;
+}
+
+.navbar__user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.navbar__user-name {
+  font-family: 'Teko', var(--font-heading);
+  font-size: 1.02rem;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.navbar__user-badge {
+  background: rgba(255, 180, 0, 0.15);
+  color: #ffd86b;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 1px;
+  border: 1px solid rgba(255, 180, 0, 0.3);
+}
+
+.navbar__user-caret {
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+}
+
+.navbar__user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  background: rgba(15, 18, 20, 0.98);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+  z-index: 50;
+  animation: fade-in 0.18s ease;
+}
+
+.navbar__user-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 11px 16px;
+  color: var(--text-white);
+  font-size: 0.88rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--transition);
+  font-family: inherit;
+}
+
+.navbar__user-item:hover {
+  background: rgba(0, 255, 135, 0.08);
+}
+
+.navbar__user-item--danger {
+  color: #ff6b6b;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.navbar__user-item--danger:hover {
+  background: rgba(255, 80, 80, 0.12);
 }
 
 .navbar__hamburger {
@@ -427,10 +608,27 @@ function isActive(to: string) {
     display: none;
   }
 
-  .navbar__link--admin {
+  .navbar__link--auth,
+  .navbar__link--signup {
     margin-left: 0;
     margin-top: 8px;
     text-align: center;
+    justify-content: center;
+  }
+
+  .navbar__user {
+    margin-left: 0;
+    margin-top: 10px;
+  }
+
+  .navbar__user-btn {
+    width: 100%;
+  }
+
+  .navbar__user-menu {
+    position: static;
+    width: 100%;
+    margin-top: 6px;
   }
 
   .footer__links {

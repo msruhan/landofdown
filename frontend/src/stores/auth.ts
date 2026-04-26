@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/services/api'
-import type { AuthUser } from '@/types'
+import type { AuthUser, RegisterPayload } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthUser | null>(null)
@@ -10,7 +10,9 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref<string | null>(null)
 
   const isAuthenticated = computed(() => !!token.value)
-  const userName = computed(() => user.value?.name ?? 'Admin')
+  const isAdmin = computed(() => !!user.value?.is_admin)
+  const userName = computed(() => user.value?.name ?? user.value?.username ?? 'Member')
+  const userAvatar = computed(() => user.value?.avatar_url ?? null)
 
   async function login(email: string, password: string) {
     loading.value = true
@@ -22,6 +24,25 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('auth_token', response.data.token)
     } catch (err: unknown) {
       const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Login failed'
+      error.value = message
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function register(payload: RegisterPayload) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await authApi.register(payload)
+      token.value = response.data.token
+      user.value = response.data.user
+      localStorage.setItem('auth_token', response.data.token)
+    } catch (err: unknown) {
+      const response = (err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } })?.response
+      const firstError = response?.data?.errors ? Object.values(response.data.errors).flat()[0] : null
+      const message = firstError || response?.data?.message || 'Register failed'
       error.value = message
       throw err
     } finally {
@@ -53,5 +74,18 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { user, token, loading, error, isAuthenticated, userName, login, logout, fetchUser }
+  return {
+    user,
+    token,
+    loading,
+    error,
+    isAuthenticated,
+    isAdmin,
+    userName,
+    userAvatar,
+    login,
+    register,
+    logout,
+    fetchUser,
+  }
 })

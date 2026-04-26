@@ -3,6 +3,7 @@ import { getAvatarUrl, handleAvatarError } from '@/utils/avatar'
 
 defineProps<{
   username: string
+  avatarUrl?: string | null
   playerId?: number
   linkable?: boolean
 }>()
@@ -15,7 +16,7 @@ defineProps<{
     class="player-badge"
   >
     <span class="player-badge__avatar">
-      <img :src="getAvatarUrl(username)" :alt="username" class="player-badge__img" @error="(event) => handleAvatarError(event, username)" />
+      <img :src="getAvatarUrl(username, avatarUrl)" :alt="username" class="player-badge__img" @error="(event) => handleAvatarError(event, username)" />
     </span>
     <span class="player-badge__name">{{ username }}</span>
   </component>

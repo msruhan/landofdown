@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import PublicLayout from '@/layouts/PublicLayout.vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -36,16 +37,6 @@ const router = createRouter({
           component: () => import('@/pages/public/BattlePage.vue'),
         },
         {
-          path: 'drafts',
-          name: 'drafts',
-          component: () => import('@/pages/public/DraftsPage.vue'),
-        },
-        {
-          path: 'meta',
-          name: 'meta',
-          component: () => import('@/pages/public/MetaPage.vue'),
-        },
-        {
           path: 'head-to-head',
           name: 'head-to-head',
           component: () => import('@/pages/public/HeadToHeadPage.vue'),
@@ -55,7 +46,29 @@ const router = createRouter({
           name: 'match-detail',
           component: () => import('@/pages/public/MatchDetailPage.vue'),
         },
+        {
+          path: 'mabar',
+          name: 'mabar',
+          component: () => import('@/pages/public/MabarLoungePage.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
+          path: 'mabar/room/:id',
+          name: 'mabar-room',
+          component: () => import('@/pages/public/MabarRoomPage.vue'),
+          meta: { requiresAuth: true, hideChrome: true },
+        },
       ],
+    },
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/pages/public/LoginPage.vue'),
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/pages/public/RegisterPage.vue'),
     },
     {
       path: '/admin/login',
@@ -65,7 +78,7 @@ const router = createRouter({
     {
       path: '/admin',
       component: AdminLayout,
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, requiresAdmin: true },
       children: [
         {
           path: 'dashboard',
@@ -107,19 +120,36 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
+  const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)
 
-  if (requiresAuth) {
-    const token = localStorage.getItem('auth_token')
-    if (!token) {
-      next({ name: 'admin-login', query: { redirect: to.fullPath } })
-    } else {
-      next()
-    }
-  } else {
-    next()
+  const token = localStorage.getItem('auth_token')
+
+  if (!requiresAuth) {
+    return next()
   }
+
+  if (!token) {
+    const loginRoute = requiresAdmin ? 'admin-login' : 'login'
+    return next({ name: loginRoute, query: { redirect: to.fullPath } })
+  }
+
+  // Ensure user info loaded
+  const auth = useAuthStore()
+  if (!auth.user) {
+    try {
+      await auth.fetchUser()
+    } catch {
+      // ignore
+    }
+  }
+
+  if (requiresAdmin && !auth.isAdmin) {
+    return next({ name: 'dashboard' })
+  }
+
+  next()
 })
 
 export default router
