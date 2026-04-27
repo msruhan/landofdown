@@ -1,0 +1,29 @@
+.git
+.github
+**/.DS_Store
+
+# Dependencies (installed in image)
+**/node_modules
+backend/vendor
+
+# Build outputs
+frontend/dist
+backend/public/build
+
+# Local env (keep .env.example / .env.sqlite from repo for Docker defaults)
+**/.env
+**/.env.local
+**/.env.production
+
+# Tests & tooling
+**/coverage
+**/.phpunit.result.cache
+**/.eslintcache
+**/cypress
+**/cypress/**
+**/__screenshots__
+
+# Editor & misc
+**/.cursor
+**/.idea
+**/.vscode

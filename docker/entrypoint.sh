@@ -33,4 +33,7 @@ fi
 php artisan config:clear
 php artisan migrate --force
 
+chown -R www-data:www-data storage bootstrap/cache database
+chmod -R ug+rwX storage bootstrap/cache database
+
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

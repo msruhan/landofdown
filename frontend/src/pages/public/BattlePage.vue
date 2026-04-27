@@ -965,7 +965,7 @@ void shareToWhatsApp
                 <div class="prediction-reasoning__head-text">
                   <h4 class="prediction-reasoning__title">Analisis AI</h4>
                   <p class="prediction-reasoning__hint">
-                    <span v-if="reasoningLoading">OpenRouter sedang menulis alasan prediksi...</span>
+                    <span v-if="reasoningLoading">AI sedang menulis alasan prediksi...</span>
                     <span v-else-if="reasoning?.model">Diberdayakan oleh {{ reasoning.model }}</span>
                     <span v-else-if="reasoningError">Narasi AI tidak tersedia, menggunakan ringkasan data.</span>
                     <span v-else>Kenapa salah satu tim diprediksi menang?</span>
